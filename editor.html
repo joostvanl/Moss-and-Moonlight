@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Level Editor — Moss & Moonlight</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #07111e;
+      display: flex;
+      align-items: flex-start;
+      min-height: 100vh;
+      font-family: 'Georgia', serif;
+      color: #c8ddc8;
+      overflow-x: hidden;
+    }
+
+    /* ── Canvas wrapper ─────────────────────────────── */
+    #game-container {
+      flex-shrink: 0;
+      position: relative;
+      border-right: 2px solid #1e3a2a;
+    }
+    #game-container canvas {
+      display: block;
+    }
+
+    /* Cursor helpers set via JS */
+    #game-container.tool-place  canvas { cursor: crosshair; }
+    #game-container.tool-move   canvas { cursor: grab; }
+    #game-container.tool-delete canvas { cursor: not-allowed; }
+
+    /* ── Sidebar ─────────────────────────────────────── */
+    #sidebar {
+      width: 320px;
+      min-height: 600px;
+      background: #0c1e2c;
+      border-left: 2px solid #1e3a2a;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      flex-shrink: 0;
+    }
+
+    /* header bar */
+    #sidebar-header {
+      background: #0a2a18;
+      padding: 12px 14px;
+      border-bottom: 1px solid #1e3a2a;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    #sidebar-header h1 {
+      font-size: 15px;
+      color: #88ee88;
+      font-style: italic;
+      white-space: nowrap;
+    }
+
+    /* sections */
+    .section {
+      padding: 12px 14px;
+      border-bottom: 1px solid #142030;
+    }
+    .section-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: #4a8a6a;
+      margin-bottom: 8px;
+    }
+
+    /* level selector */
+    select, input[type=number] {
+      background: #0e2030;
+      border: 1px solid #2a4a3a;
+      color: #b8d8b8;
+      font-family: 'Georgia', serif;
+      font-size: 13px;
+      padding: 5px 8px;
+      border-radius: 4px;
+      width: 100%;
+    }
+    select:focus, input[type=number]:focus { outline: 1px solid #44aa66; }
+
+    /* tool buttons */
+    .tool-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+    .tool-btn {
+      background: #0e2030;
+      border: 1px solid #2a4a3a;
+      color: #88ccaa;
+      font-family: 'Georgia', serif;
+      font-size: 12px;
+      padding: 7px 6px;
+      border-radius: 5px;
+      cursor: pointer;
+      text-align: center;
+      transition: background 0.15s, border-color 0.15s;
+      user-select: none;
+    }
+    .tool-btn:hover { background: #162840; border-color: #3a6a5a; }
+    .tool-btn.active {
+      background: #1a4a2a;
+      border-color: #44aa66;
+      color: #aaffaa;
+    }
+
+    /* radio + checkbox rows */
+    .radio-row, .check-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 5px;
+      font-size: 12px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .radio-row input, .check-row input { accent-color: #44aa66; cursor: pointer; }
+
+    /* sliders */
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 7px;
+      font-size: 12px;
+    }
+    .slider-row label { width: 76px; flex-shrink: 0; color: #8ab0a0; }
+    .slider-row input[type=range] {
+      flex: 1;
+      accent-color: #44aa66;
+      cursor: pointer;
+    }
+    .slider-row .val {
+      width: 34px;
+      text-align: right;
+      color: #aaffaa;
+      font-size: 11px;
+    }
+
+    /* sub-section for moving platform */
+    .sub-section {
+      background: #0a1a28;
+      border: 1px solid #1e3a2a;
+      border-radius: 5px;
+      padding: 8px 10px;
+      margin-top: 6px;
+    }
+    .sub-section .section-title { margin-bottom: 6px; }
+
+    /* number inputs in sub-section */
+    .num-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    .num-row label { font-size: 11px; color: #7a9a8a; display: block; margin-bottom: 2px; }
+
+    /* action buttons */
+    .action-btn {
+      display: block;
+      width: 100%;
+      padding: 9px;
+      border-radius: 5px;
+      border: 1px solid;
+      font-family: 'Georgia', serif;
+      font-size: 13px;
+      cursor: pointer;
+      text-align: center;
+      margin-bottom: 6px;
+      transition: opacity 0.15s;
+    }
+    .action-btn:hover { opacity: 0.85; }
+    .btn-save   { background: #1a4a2a; border-color: #44aa66; color: #aaffaa; }
+    .btn-reset  { background: #2a2a10; border-color: #8a8a30; color: #cccc88; }
+    .btn-test   { background: #102a4a; border-color: #3a6aaa; color: #88aaff; }
+    .btn-clear  { background: #3a1010; border-color: #aa3333; color: #ff8888; }
+
+    /* status bar */
+    #status-bar {
+      padding: 7px 14px;
+      font-size: 11px;
+      color: #5a9a7a;
+      border-top: 1px solid #142030;
+      margin-top: auto;
+      min-height: 30px;
+    }
+
+    /* hidden helper */
+    .hidden { display: none !important; }
+
+    /* grid toggle hint */
+    #grid-hint {
+      font-size: 11px;
+      color: #4a7a5a;
+      margin-top: 4px;
+    }
+
+    /* type color dots */
+    .type-dot {
+      display: inline-block;
+      width: 10px; height: 10px;
+      border-radius: 2px;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+    .dot-moss     { background: #3a6b30; }
+    .dot-log      { background: #5a4030; }
+    .dot-mushroom { background: #9b5523; }
+  </style>
+</head>
+<body>
+
+<div id="game-container"></div>
+
+<div id="sidebar">
+  <div id="sidebar-header">
+    <h1>Level Editor</h1>
+    <span style="font-size:11px;color:#4a8a6a;margin-left:auto">Moss &amp; Moonlight</span>
+    <a href="index.html" style="margin-left:10px;font-size:12px;color:#88aaff;text-decoration:none;border:1px solid #2a4a7a;padding:3px 9px;border-radius:4px;white-space:nowrap;">← Spel</a>
+  </div>
+
+  <!-- Level selector -->
+  <div class="section">
+    <div class="section-title">Level</div>
+    <select id="level-select">
+    </select>
+  </div>
+
+  <!-- Tools -->
+  <div class="section">
+    <div class="section-title">Tool</div>
+    <div class="tool-row">
+      <button class="tool-btn active" id="tool-place-platform" data-tool="place-platform">＋ Platform</button>
+      <button class="tool-btn" id="tool-place-firefly"   data-tool="place-firefly">✦ Vuurvliegje</button>
+    </div>
+    <div class="tool-row">
+      <button class="tool-btn" id="tool-place-powerup"  data-tool="place-powerup">◈ Powerup</button>
+      <button class="tool-btn" id="tool-place-enemy"    data-tool="place-enemy">👾 Vijand</button>
+    </div>
+    <div class="tool-row">
+      <button class="tool-btn" id="tool-place-flyer"    data-tool="place-flyer">🦇 Flyer</button>
+      <button class="tool-btn" id="tool-place-counter"  data-tool="place-counter">🔮 Counter</button>
+    </div>
+    <div class="tool-row">
+      <button class="tool-btn" id="tool-delete"         data-tool="delete">✕ Verwijder</button>
+    </div>
+    <div id="grid-hint">G = grid aan/uit &nbsp;·&nbsp; ← → scrollen</div>
+  </div>
+
+  <!-- Platform properties -->
+  <div class="section" id="panel-platform">
+    <div class="section-title">Platform eigenschappen</div>
+
+    <div class="section-title" style="margin-top:4px">Soort</div>
+    <label class="radio-row">
+      <input type="radio" name="plat-type" value="moss" checked>
+      <span class="type-dot dot-moss"></span>Moss
+    </label>
+    <label class="radio-row">
+      <input type="radio" name="plat-type" value="log">
+      <span class="type-dot dot-log"></span>Log
+    </label>
+    <label class="radio-row">
+      <input type="radio" name="plat-type" value="mushroom">
+      <span class="type-dot dot-mushroom"></span>Mushroom
+    </label>
+
+    <div class="slider-row" style="margin-top:8px">
+      <label>Breedte</label>
+      <input type="range" id="plat-w" min="60" max="400" value="160" step="8">
+      <span class="val" id="plat-w-val">160</span>
+    </div>
+    <div class="slider-row">
+      <label>Hoogte</label>
+      <input type="range" id="plat-h" min="12" max="40" value="22" step="2">
+      <span class="val" id="plat-h-val">22</span>
+    </div>
+  </div>
+
+  <!-- Powerup properties -->
+  <div class="section hidden" id="panel-powerup">
+    <div class="section-title">Powerup type</div>
+    <label class="radio-row">
+      <input type="radio" name="pu-type" value="double_jump" checked>
+      <span style="color:#44aaff">2×</span> Dubbele sprong
+    </label>
+    <label class="radio-row">
+      <input type="radio" name="pu-type" value="speed">
+      <span style="color:#ffaa22">»»</span> Snelheid
+    </label>
+    <label class="radio-row">
+      <input type="radio" name="pu-type" value="heart">
+      <span style="color:#ff3355">♥</span> Extra leven
+    </label>
+  </div>
+
+  <!-- Enemy properties -->
+  <div class="section hidden" id="panel-enemy">
+    <div class="section-title">Vijand eigenschappen</div>
+    <div class="slider-row">
+      <label>Patrouille breedte</label>
+      <input type="range" id="enemy-patrol-w" min="40" max="400" value="160" step="8">
+      <span class="val" id="enemy-patrol-w-val">160</span>
+    </div>
+    <div class="slider-row">
+      <label>Snelheid</label>
+      <input type="range" id="enemy-speed" min="20" max="150" value="55" step="5">
+      <span class="val" id="enemy-speed-val">55</span>
+    </div>
+  </div>
+
+  <!-- Flyer properties -->
+  <div class="section hidden" id="panel-flyer">
+    <div class="section-title">Flyer eigenschappen</div>
+    <div class="slider-row">
+      <label>Patrouille breedte</label>
+      <input type="range" id="flyer-patrol-w" min="40" max="600" value="300" step="8">
+      <span class="val" id="flyer-patrol-w-val">300</span>
+    </div>
+    <div class="slider-row">
+      <label>Snelheid</label>
+      <input type="range" id="flyer-speed" min="20" max="150" value="60" step="5">
+      <span class="val" id="flyer-speed-val">60</span>
+    </div>
+    <div class="slider-row">
+      <label>Schiet interval (s)</label>
+      <input type="range" id="flyer-shoot" min="2" max="20" value="8" step="1">
+      <span class="val" id="flyer-shoot-val">8</span>
+    </div>
+  </div>
+
+  <!-- Counter properties -->
+  <div class="section hidden" id="panel-counter">
+    <div class="section-title">Counter eigenschappen</div>
+    <div class="slider-row">
+      <label>Achtervolg snelheid</label>
+      <input type="range" id="counter-chase" min="5" max="120" value="28" step="1">
+      <span class="val" id="counter-chase-val">28</span>
+    </div>
+    <div class="slider-row">
+      <label>Nabijheids radius</label>
+      <input type="range" id="counter-prox" min="40" max="300" value="110" step="5">
+      <span class="val" id="counter-prox-val">110</span>
+    </div>
+    <div class="slider-row">
+      <label>Tick interval (s)</label>
+      <input type="range" id="counter-tick" min="0.1" max="2.0" value="0.333" step="0.1">
+      <span class="val" id="counter-tick-val">0.333</span>
+    </div>
+  </div>
+
+  <!-- Selected object properties (shown when an object is selected) -->
+  <div class="section hidden" id="panel-selected">
+    <div class="section-title">Geselecteerd object</div>
+    <div id="selected-info" style="font-size:12px;color:#8ab0a0;margin-bottom:8px"></div>
+
+    <!-- Platform edit fields (shown when selected is a platform) -->
+    <div id="selected-platform-fields">
+      <div class="section-title" style="margin-top:2px">Soort</div>
+      <label class="radio-row">
+        <input type="radio" name="sel-type" value="moss">
+        <span class="type-dot dot-moss"></span>Moss
+      </label>
+      <label class="radio-row">
+        <input type="radio" name="sel-type" value="log">
+        <span class="type-dot dot-log"></span>Log
+      </label>
+      <label class="radio-row">
+        <input type="radio" name="sel-type" value="mushroom">
+        <span class="type-dot dot-mushroom"></span>Mushroom
+      </label>
+      <div class="slider-row" style="margin-top:6px">
+        <label>Breedte</label>
+        <input type="range" id="sel-plat-w" min="60" max="400" value="160" step="8">
+        <span class="val" id="sel-plat-w-val">160</span>
+      </div>
+      <div class="slider-row">
+        <label>Hoogte</label>
+        <input type="range" id="sel-plat-h" min="12" max="40" value="22" step="2">
+        <span class="val" id="sel-plat-h-val">22</span>
+      </div>
+    </div>
+
+    <!-- Enemy edit fields (shown when selected is an enemy) -->
+    <div id="selected-enemy-fields" class="hidden">
+      <div class="slider-row" style="margin-top:4px">
+        <label>Min X</label>
+        <input type="range" id="sel-enemy-minx" min="0" max="3600" value="100" step="8">
+        <span class="val" id="sel-enemy-minx-val">100</span>
+      </div>
+      <div class="slider-row">
+        <label>Max X</label>
+        <input type="range" id="sel-enemy-maxx" min="0" max="3600" value="300" step="8">
+        <span class="val" id="sel-enemy-maxx-val">300</span>
+      </div>
+      <div class="slider-row">
+        <label>Snelheid</label>
+        <input type="range" id="sel-enemy-speed" min="20" max="150" value="55" step="5">
+        <span class="val" id="sel-enemy-speed-val">55</span>
+      </div>
+    </div>
+
+    <!-- Flyer edit fields -->
+    <div id="selected-flyer-fields" class="hidden">
+      <div class="slider-row" style="margin-top:4px">
+        <label>Min X</label>
+        <input type="range" id="sel-flyer-minx" min="0" max="3600" value="100" step="8">
+        <span class="val" id="sel-flyer-minx-val">100</span>
+      </div>
+      <div class="slider-row">
+        <label>Max X</label>
+        <input type="range" id="sel-flyer-maxx" min="0" max="3600" value="400" step="8">
+        <span class="val" id="sel-flyer-maxx-val">400</span>
+      </div>
+      <div class="slider-row">
+        <label>Snelheid</label>
+        <input type="range" id="sel-flyer-speed" min="20" max="150" value="60" step="5">
+        <span class="val" id="sel-flyer-speed-val">60</span>
+      </div>
+      <div class="slider-row">
+        <label>Schiet interval (s)</label>
+        <input type="range" id="sel-flyer-shoot" min="2" max="20" value="8" step="1">
+        <span class="val" id="sel-flyer-shoot-val">8</span>
+      </div>
+    </div>
+
+    <!-- Counter edit fields -->
+    <div id="selected-counter-fields" class="hidden">
+      <div class="slider-row" style="margin-top:4px">
+        <label>Achtervolg snelheid</label>
+        <input type="range" id="sel-counter-chase" min="5" max="120" value="28" step="1">
+        <span class="val" id="sel-counter-chase-val">28</span>
+      </div>
+      <div class="slider-row">
+        <label>Nabijheids radius</label>
+        <input type="range" id="sel-counter-prox" min="40" max="300" value="110" step="5">
+        <span class="val" id="sel-counter-prox-val">110</span>
+      </div>
+      <div class="slider-row">
+        <label>Tick interval (s)</label>
+        <input type="range" id="sel-counter-tick" min="0.1" max="2.0" value="0.333" step="0.1">
+        <span class="val" id="sel-counter-tick-val">0.333</span>
+      </div>
+    </div>
+
+    <button class="action-btn btn-clear" id="btn-delete-selected" style="margin-top:8px">✕ Verwijder dit object</button>
+  </div>
+
+  <!-- Actions -->
+  <div class="section">
+    <div class="section-title">Acties</div>
+    <button class="action-btn btn-save"  id="btn-save">💾 Opslaan naar spel</button>
+    <button class="action-btn btn-test"  id="btn-test">▶ Test level (nieuw tabblad)</button>
+    <button class="action-btn btn-reset" id="btn-reset">↺ Reset naar standaard</button>
+    <button class="action-btn btn-clear" id="btn-clear-all" style="margin-top:4px">🗑 Verwijder alle objecten</button>
+  </div>
+
+  <div id="status-bar">Gereed — klik op het canvas om te plaatsen</div>
+</div>
+
+<script>const EDITOR_MODE = true;</script>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
+<script src="js/game.js"></script>
+<script src="js/editor.js"></script>
+</body>
+</html>
