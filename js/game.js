@@ -711,6 +711,7 @@ class GameScene extends Phaser.Scene {
     b.setRotation(Math.atan2(vy, vx));
     this.tweens.add({ targets: b, alpha: { from: 1, to: 0.6 }, duration: 200, yoyo: true, repeat: -1 });
     this.time.delayedCall(3000, () => { if (b.active) b.destroy(); });
+    if (window.SoundManager) SoundManager.sfxShoot();
   }
 
   createCounters(lvl) {
@@ -869,6 +870,7 @@ class GameScene extends Phaser.Scene {
           this.player.x = lvl.playerStart.x;
           this.player.y = lvl.playerStart.y;
           this.player.body.setVelocity(0, 0);
+          if (window.SoundManager) SoundManager.sfxLava();
           this.hurtPlayer(false);
         }
       });
@@ -890,6 +892,7 @@ class GameScene extends Phaser.Scene {
       this.scene.get('UIScene').updateScore(this.firefliesCollected, this.firefliesTotal);
       const flash = this.add.circle(ff.x, ff.y, 18, 0xffdd44, 0.9);
       this.tweens.add({ targets: flash, alpha: 0, scale: 2.5, duration: 280, onComplete: () => flash.destroy() });
+      if (window.SoundManager) SoundManager.sfxCollectFirefly();
       if (this.firefliesCollected >= this.firefliesTotal) this.winLevel();
     });
 
@@ -908,6 +911,7 @@ class GameScene extends Phaser.Scene {
       if (fallingOnTop) {
         enemy.destroy();
         this.player.body.setVelocityY(-400);
+        if (window.SoundManager) SoundManager.sfxEnemyKill();
       } else if (!this.isHurt) {
         this.hurtPlayer(false);
       }
@@ -921,6 +925,7 @@ class GameScene extends Phaser.Scene {
         this.tweens.add({ targets: puff, alpha: 0, scale: 2.5, duration: 300, onComplete: () => puff.destroy() });
         fe.destroy();
         this.player.body.setVelocityY(-420);
+        if (window.SoundManager) SoundManager.sfxEnemyKill();
       } else if (!this.isHurt) {
         this.hurtPlayer(false);
       }
@@ -929,6 +934,7 @@ class GameScene extends Phaser.Scene {
     this.physics.add.overlap(this.player, this.bullets, (_pl, bullet) => {
       if (!bullet.active || this.gameOver) return;
       bullet.destroy();
+      if (window.SoundManager) SoundManager.sfxBulletHit();
       if (!this.isHurt) this.hurtPlayer(false);
     });
   }
@@ -947,10 +953,12 @@ class GameScene extends Phaser.Scene {
       this.doubleJumpUsed = false;
       uiScene.showPowerupIndicator('double_jump', DURATION);
       this.time.delayedCall(DURATION, () => { this.hasDoubleJump = false; });
+      if (window.SoundManager) SoundManager.sfxCollectPowerup();
     } else if (type === 'speed') {
       this.hasSpeed = true;
       uiScene.showPowerupIndicator('speed', DURATION);
       this.time.delayedCall(DURATION, () => { this.hasSpeed = false; });
+      if (window.SoundManager) SoundManager.sfxCollectPowerup();
     } else if (type === 'heart') {
       if (this.playerLives < 5) {
         this.playerLives++;
@@ -959,6 +967,7 @@ class GameScene extends Phaser.Scene {
       const heartFlash = this.add.circle(pu.x, pu.y, 28, 0xff3355, 0.7);
       this.tweens.add({ targets: heartFlash, alpha: 0, scale: 2.8, duration: 400, onComplete: () => heartFlash.destroy() });
       uiScene.showPowerupIndicator('heart', 1200);
+      if (window.SoundManager) SoundManager.sfxExtraLife();
     }
   }
 
@@ -971,6 +980,7 @@ class GameScene extends Phaser.Scene {
     this.scene.get('UIScene').updateLives(this.playerLives);
     this.cameras.main.flash(150, fatal ? 220 : 160, 40, 40);
     this.player.body.setVelocity(-80, -280);
+    if (window.SoundManager) SoundManager.sfxLoseLife();
     this.tweens.add({
       targets: this.player, alpha: 0.4, duration: 100, yoyo: true, repeat: 5,
       onComplete: () => {
@@ -984,6 +994,7 @@ class GameScene extends Phaser.Scene {
   winLevel() {
     this.gameOver = true;
     this.physics.pause();
+    if (window.SoundManager) SoundManager.sfxLevelComplete();
     const next = this.currentLevel + 1;
     if (next < LEVELS.length) {
       // Show modifier picker before advancing
@@ -1000,6 +1011,7 @@ class GameScene extends Phaser.Scene {
   loseGame() {
     this.gameOver = true;
     this.physics.pause();
+    if (window.SoundManager) SoundManager.sfxGameOver();
     this.scene.get('UIScene').showGameOver();
   }
 
@@ -1067,10 +1079,12 @@ class GameScene extends Phaser.Scene {
         this.player.body.setVelocityY(jumpV);
         this._jumpHoldTime = 0;
         this._jumpHolding  = true;
+        if (window.SoundManager) SoundManager.sfxJump();
       } else if (this.hasDoubleJump && !this.doubleJumpUsed) {
         this.doubleJumpUsed = true;
         this.player.body.setVelocityY(dJumpV);
         this._jumpHolding = false;
+        if (window.SoundManager) SoundManager.sfxDoubleJump();
         const puff = this.add.circle(this.player.x, this.player.y + 20, 10, 0x44aaff, 0.7);
         this.tweens.add({ targets: puff, alpha: 0, scale: 2.2, duration: 250, onComplete: () => puff.destroy() });
       }
@@ -1126,11 +1140,13 @@ class GameScene extends Phaser.Scene {
         c.count = Math.min(5, c.count + 1);
         c.sprite.setTexture('counter_' + c.count);
         this.tweens.add({ targets: c.sprite, scaleX: 1.5, scaleY: 1.5, duration: 80, yoyo: true, ease: 'Power2' });
+        if (window.SoundManager) SoundManager.sfxCounterTick(c.count);
         if (c.count >= 5) {
           const ex = this.add.circle(c.sprite.x, c.sprite.y, 40, 0x5500ff, 0.8);
           this.tweens.add({ targets: ex, alpha: 0, scale: 3, duration: 450, onComplete: () => ex.destroy() });
           c.sprite.destroy();
           deadCounters.push(c);
+          if (window.SoundManager) SoundManager.sfxCounterExplode();
           if (!this.isHurt && !this.gameOver) this.hurtPlayer(false);
         }
       }
@@ -1339,12 +1355,19 @@ class UIScene extends Phaser.Scene {
     this.puBar   = this.add.container(14, 545);
     this.overlay = this.add.container(W/2, 280).setVisible(false);
 
-    this.input.keyboard.on('keydown-R', () => {
+    // Restart handler — used by both R-key and tap/click on overlay
+    this._doRestart = () => {
+      if (!this.overlay.visible) return;
       this.overlay.setVisible(false);
       window.activeModifiers = [];
       this.scene.get('GameScene').scene.restart({ level: 0, lives: 3 });
       this.scene.restart({ level: 0, lives: 3 });
-    });
+    };
+
+    this.input.keyboard.on('keydown-R', this._doRestart);
+
+    // Tap / click anywhere on the canvas restarts when the overlay is showing
+    this.input.on('pointerdown', this._doRestart);
   }
 
   refreshLanguage() {
@@ -1438,6 +1461,14 @@ if (typeof EDITOR_MODE === 'undefined') {
 
     // Restore language preference
     window.LANG = localStorage.getItem('mm_lang') || 'nl';
+
+    // Pre-fetch music bytes (no AudioContext yet — safe before user gesture).
+    // startMusic() is called from GameScene.create() after the first user input.
+    if (window.SoundManager) {
+      const wasMuted = localStorage.getItem('mm_muted') === '1';
+      SoundManager.setMuted(wasMuted);
+      SoundManager.loadMusic();
+    }
 
     new Phaser.Game({
       type: Phaser.CANVAS,
