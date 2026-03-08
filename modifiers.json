@@ -1,0 +1,9 @@
+[
+  { "id": "fast_enemies",    "category": "harder",  "label_key": "mod_fast_enemies",    "desc_key": "mod_fast_enemies_desc",    "icon": "sword" },
+  { "id": "slow_enemies",    "category": "easier",  "label_key": "mod_slow_enemies",    "desc_key": "mod_slow_enemies_desc",    "icon": "snail" },
+  { "id": "extra_life",      "category": "easier",  "label_key": "mod_extra_life",      "desc_key": "mod_extra_life_desc",      "icon": "heart" },
+  { "id": "reduced_jump",    "category": "harder",  "label_key": "mod_reduced_jump",    "desc_key": "mod_reduced_jump_desc",    "icon": "down"  },
+  { "id": "high_jump",       "category": "easier",  "label_key": "mod_high_jump",       "desc_key": "mod_high_jump_desc",       "icon": "up"    },
+  { "id": "speed_run",       "category": "twist",   "label_key": "mod_speed_run",       "desc_key": "mod_speed_run_desc",       "icon": "clock" },
+  { "id": "slippery_ground", "category": "twist",   "label_key": "mod_slippery",        "desc_key": "mod_slippery_desc",        "icon": "ice"   }
+]

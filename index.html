@@ -2,26 +2,53 @@
 <html lang="nl">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Moss & Moonlight — Enchanted Forest Platformer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Moss &amp; Moonlight — Enchanted Forest Platformer</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
+    html, body {
       background: #0a1628;
       display: flex;
       flex-direction: column;
       justify-content: center;
       align-items: center;
       min-height: 100vh;
+      width: 100%;
       font-family: 'Georgia', serif;
       color: #88dd88;
+      overflow: hidden;
+      touch-action: none;
     }
     #game-container {
       position: relative;
       border-radius: 8px;
       overflow: hidden;
       box-shadow: 0 0 60px rgba(100, 200, 150, 0.2);
+      max-width: 100vw;
+      max-height: 100vh;
     }
+
+    /* ── Language selector ───────────────────────────── */
+    #lang-select-wrap {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      z-index: 1001;
+    }
+    #lang-select {
+      background: #1a2e1a;
+      border: 1px solid #3a6b3a;
+      color: #88dd88;
+      font-family: 'Georgia', serif;
+      font-size: 13px;
+      padding: 4px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      opacity: 0.75;
+    }
+    #lang-select:hover { opacity: 1; }
 
     /* ── Admin Panel ─────────────────────────────────── */
     #admin-toggle {
@@ -58,7 +85,6 @@
       gap: 8px;
     }
     #admin-panel.open { display: flex; }
-
     #admin-panel h3 {
       font-size: 13px;
       color: #aaffaa;
@@ -68,7 +94,6 @@
       border-bottom: 1px solid #2a4a2a;
       padding-bottom: 6px;
     }
-
     .admin-section-label {
       font-size: 10px;
       color: #557755;
@@ -76,7 +101,6 @@
       letter-spacing: 1px;
       margin-top: 4px;
     }
-
     .admin-btn {
       background: #162a16;
       border: 1px solid #2e5a2e;
@@ -89,68 +113,231 @@
       text-align: left;
       transition: background 0.15s, border-color 0.15s;
     }
-    .admin-btn:hover {
-      background: #1e3e1e;
-      border-color: #55aa55;
-      color: #aaffaa;
+    .admin-btn:hover { background: #1e3e1e; border-color: #55aa55; color: #aaffaa; }
+    .admin-btn.danger { border-color: #5a2e2e; color: #dd8888; }
+    .admin-btn.danger:hover { background: #3e1e1e; border-color: #aa5555; color: #ffaaaa; }
+
+    /* ── Mobile touch controls ───────────────────────── */
+    #mobile-controls {
+      display: none;
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 100px;
+      pointer-events: none;
+      z-index: 900;
     }
-    .admin-btn.danger {
-      border-color: #5a2e2e;
-      color: #dd8888;
+    .touch-btn {
+      position: absolute;
+      background: rgba(100, 220, 130, 0.15);
+      border: 2px solid rgba(100, 220, 130, 0.4);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      color: rgba(170, 255, 170, 0.6);
+      pointer-events: auto;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+      transition: background 0.1s;
     }
-    .admin-btn.danger:hover {
-      background: #3e1e1e;
-      border-color: #aa5555;
-      color: #ffaaaa;
+    .touch-btn:active, .touch-btn.pressed {
+      background: rgba(100, 220, 130, 0.35);
+      border-color: rgba(170, 255, 170, 0.7);
+      color: rgba(200, 255, 200, 0.9);
+    }
+    #btn-left  { width: 72px; height: 72px; bottom: 20px; left: 24px; }
+    #btn-right { width: 72px; height: 72px; bottom: 20px; left: 108px; }
+    #btn-jump  { width: 84px; height: 84px; bottom: 14px; right: 30px; }
+
+    /* Show mobile controls only on touch devices */
+    @media (pointer: coarse) {
+      #mobile-controls { display: block; }
     }
   </style>
 </head>
 <body>
-  <button id="admin-toggle">⚙ Admin</button>
-
-  <div id="admin-panel">
-    <h3>Admin Panel</h3>
-
-    <span class="admin-section-label">Levels</span>
-    <button class="admin-btn" onclick="adminJumpLevel(0)">▶ Level 1 — Maanwoud</button>
-    <button class="admin-btn" onclick="adminJumpLevel(1)">▶ Level 2 — Kristalgrotten</button>
-    <button class="admin-btn" onclick="adminJumpLevel(2)">▶ Level 3 — Schaduwrijk</button>
-    <button class="admin-btn" onclick="adminJumpLevel(3)">▶ Level 4 — De Krochten</button>
-    <button class="admin-btn" onclick="adminJumpLevel(4)">▶ Level 5 — De Vuurgrot</button>
-
-    <span class="admin-section-label">Actions</span>
-    <button class="admin-btn" onclick="adminSkipLevel()">⏭ Skip to next level</button>
-    <button class="admin-btn" onclick="adminRestoreLives()">♥ Restore all lives</button>
-
-    <span class="admin-section-label">Editor</span>
-    <button class="admin-btn" onclick="window.location.href='editor.html'">✏ Open Level Editor</button>
+  <!-- Language selector -->
+  <div id="lang-select-wrap">
+    <select id="lang-select">
+      <option value="nl">🇳🇱 Nederlands</option>
+      <option value="en">🇬🇧 English</option>
+      <option value="de">🇩🇪 Deutsch</option>
+      <option value="fr">🇫🇷 Français</option>
+      <option value="es">🇪🇸 Español</option>
+      <option value="pt">🇧🇷 Português</option>
+      <option value="zh">🇨🇳 中文</option>
+      <option value="hi">🇮🇳 हिन्दी</option>
+      <option value="ar">🇸🇦 العربية</option>
+      <option value="ja">🇯🇵 日本語</option>
+      <option value="ru">🇷🇺 Русский</option>
+    </select>
   </div>
 
+  <!-- Admin toggle -->
+  <button id="admin-toggle">⚙ Admin</button>
+
+  <!-- Admin panel (labels updated by JS after i18n loads) -->
+  <div id="admin-panel">
+    <h3 id="ap-title">Admin Panel</h3>
+
+    <span class="admin-section-label" id="ap-lbl-levels">Levels</span>
+    <!-- Level buttons injected dynamically by JS -->
+    <div id="ap-level-buttons"></div>
+
+    <span class="admin-section-label" id="ap-lbl-actions">Actions</span>
+    <button class="admin-btn" id="ap-btn-skip" onclick="adminSkipLevel()">⏭ Skip to next level</button>
+    <button class="admin-btn" id="ap-btn-lives" onclick="adminRestoreLives()">♥ Restore all lives</button>
+
+    <span class="admin-section-label" id="ap-lbl-editor">Editor</span>
+    <button class="admin-btn" id="ap-btn-editor" onclick="window.location.href='editor.html'">✏ Open Level Editor</button>
+  </div>
+
+  <!-- Game canvas -->
   <div id="game-container"></div>
 
+  <!-- Mobile touch buttons -->
+  <div id="mobile-controls">
+    <div class="touch-btn" id="btn-left">&#8592;</div>
+    <div class="touch-btn" id="btn-right">&#8594;</div>
+    <div class="touch-btn" id="btn-jump">&#8593;</div>
+  </div>
+
   <script>
-    // Admin toggle
+    // ── Language selector ─────────────────────────────────────────────────────
+    const langSel = document.getElementById('lang-select');
+    langSel.value = localStorage.getItem('mm_lang') || 'nl';
+    langSel.addEventListener('change', () => {
+      window.LANG = langSel.value;
+      localStorage.setItem('mm_lang', langSel.value);
+      _applyAdminI18n();
+      // Also refresh live Phaser text via the game API
+      window.gameAdminAPI?.refreshLanguage();
+    });
+
+    function _applyAdminI18n() {
+      if (!window.T) return;
+      document.getElementById('ap-title').textContent    = window.T('admin_panel_title');
+      document.getElementById('ap-lbl-levels').textContent  = window.T('admin_levels_label');
+      document.getElementById('ap-lbl-actions').textContent = window.T('admin_actions_label');
+      document.getElementById('ap-lbl-editor').textContent  = window.T('admin_editor_label');
+      document.getElementById('ap-btn-skip').textContent    = window.T('admin_skip');
+      document.getElementById('ap-btn-lives').textContent   = window.T('admin_restore');
+      document.getElementById('ap-btn-editor').textContent  = window.T('admin_open_editor');
+    }
+
+    // Called by game.js after i18n + levels are loaded
+    function initAdminPanel(levels) {
+      const container = document.getElementById('ap-level-buttons');
+      container.innerHTML = '';
+      levels.forEach((lvl, i) => {
+        const btn = document.createElement('button');
+        btn.className = 'admin-btn';
+        btn.textContent = '\u25b6 Level ' + (i + 1) + ' \u2014 ' + lvl.name;
+        btn.onclick = () => adminJumpLevel(i);
+        container.appendChild(btn);
+      });
+      _applyAdminI18n();
+    }
+    window.initAdminPanel = initAdminPanel;
+
+    // ── Admin panel toggle ────────────────────────────────────────────────────
     document.getElementById('admin-toggle').addEventListener('click', () => {
       document.getElementById('admin-panel').classList.toggle('open');
     });
-
-    // Close panel when clicking outside
     document.addEventListener('click', (e) => {
-      const panel = document.getElementById('admin-panel');
+      const panel  = document.getElementById('admin-panel');
       const toggle = document.getElementById('admin-toggle');
       if (!panel.contains(e.target) && e.target !== toggle) {
         panel.classList.remove('open');
       }
     });
 
-    // These functions are called by the panel buttons and delegate to
-    // the currently active Phaser GameScene via window.gameAdminAPI
-    function adminJumpLevel(idx)    { window.gameAdminAPI?.jumpToLevel(idx); }
-    function adminSkipLevel()       { window.gameAdminAPI?.skipLevel(); }
-    function adminRestoreLives()    { window.gameAdminAPI?.restoreLives(); }
+    function adminJumpLevel(idx)  { window.gameAdminAPI?.jumpToLevel(idx); }
+    function adminSkipLevel()     { window.gameAdminAPI?.skipLevel(); }
+    function adminRestoreLives()  { window.gameAdminAPI?.restoreLives(); }
+
+    // ── Mobile touch controls ─────────────────────────────────────────────────
+    function bindTouchBtn(id, inputKey) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        window.mobileInput[inputKey] = true;
+        if (inputKey === 'jump') window.mobileInput._jumpJustDown = true;
+        el.classList.add('pressed');
+      }, { passive: false });
+      el.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        window.mobileInput[inputKey] = false;
+        el.classList.remove('pressed');
+      }, { passive: false });
+      el.addEventListener('touchcancel', () => {
+        window.mobileInput[inputKey] = false;
+        el.classList.remove('pressed');
+      });
+    }
+    // mobileInput is defined in game.js; set a global reference so HTML can use it
+    // The game sets window.mobileInput — we write through the same object
+    // We need to set the global before game loads, so we initialise it here too
+    if (!window.mobileInput) window.mobileInput = { left: false, right: false, jump: false, _jumpJustDown: false };
+    bindTouchBtn('btn-left',  'left');
+    bindTouchBtn('btn-right', 'right');
+    bindTouchBtn('btn-jump',  'jump');
+
+    // ── Auto-fullscreen on landscape, exit on portrait ────────────────────────
+    function _isLandscape() {
+      if (screen.orientation && screen.orientation.type) {
+        return screen.orientation.type.startsWith('landscape');
+      }
+      return window.innerWidth > window.innerHeight;
+    }
+
+    function _enterFullscreen() {
+      const el = document.documentElement;
+      const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+      if (req) req.call(el).catch(() => {});
+    }
+
+    function _exitFullscreen() {
+      const ex = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;
+      if (ex && (document.fullscreenElement || document.webkitFullscreenElement)) ex.call(document).catch(() => {});
+    }
+
+    function _handleOrientation() {
+      if (_isLandscape()) {
+        _enterFullscreen();
+      } else {
+        _exitFullscreen();
+      }
+    }
+
+    // Listen for orientation changes (modern API + legacy fallback)
+    if (screen.orientation) {
+      screen.orientation.addEventListener('change', _handleOrientation);
+    }
+    window.addEventListener('orientationchange', _handleOrientation);
+    // Also handle resize (covers desktop window resize and some mobile edge-cases)
+    window.addEventListener('resize', _handleOrientation);
+    // Check immediately on page load
+    _handleOrientation();
   </script>
 
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
   <script src="js/game.js"></script>
+
+  <script>
+    // After game.js loads and i18n is ready, call initAdminPanel
+    // We poll until LEVELS is populated (loaded async)
+    const _adminInitInterval = setInterval(() => {
+      if (window.LEVELS && window.LEVELS.length > 0 && window.T) {
+        clearInterval(_adminInitInterval);
+        window.initAdminPanel(window.LEVELS);
+      }
+    }, 100);
+  </script>
 </body>
 </html>

@@ -226,6 +226,19 @@
   <div id="sidebar-header">
     <h1>Level Editor</h1>
     <span style="font-size:11px;color:#4a8a6a;margin-left:auto">Moss &amp; Moonlight</span>
+    <select id="lang-select" style="width:auto;padding:3px 6px;font-size:12px;margin-left:8px;opacity:0.8;" title="Language">
+      <option value="nl">NL</option>
+      <option value="en">EN</option>
+      <option value="de">DE</option>
+      <option value="fr">FR</option>
+      <option value="es">ES</option>
+      <option value="pt">PT</option>
+      <option value="zh">ZH</option>
+      <option value="hi">HI</option>
+      <option value="ar">AR</option>
+      <option value="ja">JA</option>
+      <option value="ru">RU</option>
+    </select>
     <a href="index.html" style="margin-left:10px;font-size:12px;color:#88aaff;text-decoration:none;border:1px solid #2a4a7a;padding:3px 9px;border-radius:4px;white-space:nowrap;">← Spel</a>
   </div>
 
@@ -252,6 +265,7 @@
       <button class="tool-btn" id="tool-place-counter"  data-tool="place-counter">🔮 Counter</button>
     </div>
     <div class="tool-row">
+      <button class="tool-btn" id="tool-place-lava"     data-tool="place-lava">🌋 Lava</button>
       <button class="tool-btn" id="tool-delete"         data-tool="delete">✕ Verwijder</button>
     </div>
     <div id="grid-hint">G = grid aan/uit &nbsp;·&nbsp; ← → scrollen</div>
@@ -359,6 +373,15 @@
     </div>
   </div>
 
+  <!-- Lava properties -->
+  <div class="section hidden" id="panel-lava">
+    <div class="section-title">🌋 Lava sectie</div>
+    <p style="font-size:11px;color:#8ab0a0;margin-bottom:8px;line-height:1.5">
+      Klik en sleep horizontaal op het grondniveau om een lava sectie te tekenen.<br>
+      Klik een bestaande sectie aan om die te verplaatsen of te verwijderen.
+    </p>
+  </div>
+
   <!-- Selected object properties (shown when an object is selected) -->
   <div class="section hidden" id="panel-selected">
     <div class="section-title">Geselecteerd object</div>
@@ -453,6 +476,20 @@
       </div>
     </div>
 
+    <!-- Lava edit fields -->
+    <div id="selected-lava-fields" class="hidden">
+      <div class="slider-row" style="margin-top:4px">
+        <label>Start X (x1)</label>
+        <input type="range" id="sel-lava-x1" min="0" max="3500" value="400" step="8">
+        <span class="val" id="sel-lava-x1-val">400</span>
+      </div>
+      <div class="slider-row">
+        <label>Einde X (x2)</label>
+        <input type="range" id="sel-lava-x2" min="0" max="3600" value="700" step="8">
+        <span class="val" id="sel-lava-x2-val">700</span>
+      </div>
+    </div>
+
     <button class="action-btn btn-clear" id="btn-delete-selected" style="margin-top:8px">✕ Verwijder dit object</button>
   </div>
 
@@ -469,6 +506,18 @@
 </div>
 
 <script>const EDITOR_MODE = true;</script>
+<script>
+  // Language preference — shared with main game
+  const _ls = document.getElementById('lang-select');
+  if (_ls) {
+    _ls.value = localStorage.getItem('mm_lang') || 'nl';
+    window.LANG = _ls.value;
+    _ls.addEventListener('change', () => {
+      window.LANG = _ls.value;
+      localStorage.setItem('mm_lang', _ls.value);
+    });
+  }
+</script>
 <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
 <script src="js/game.js"></script>
 <script src="js/editor.js"></script>

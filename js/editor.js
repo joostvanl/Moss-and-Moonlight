@@ -8,7 +8,7 @@
 
 const EditorState = {
   currentLevel: 0,
-  tool: 'place-platform',   // 'place-platform' | 'place-firefly' | 'place-powerup' | 'place-enemy' | 'place-flyer' | 'delete'
+  tool: 'place-platform',   // 'place-platform' | 'place-firefly' | 'place-powerup' | 'place-enemy' | 'place-flyer' | 'place-lava' | 'delete'
   gridEnabled: true,
   gridSize: 8,
   selectedObj: null,        // { category, index }
@@ -21,6 +21,10 @@ const EditorState = {
   enemies: [],
   flyingEnemies: [],
   counters: [],
+  lavaFloor: [],            // array of { x1, x2 } sections
+
+  // Lava drag state
+  lavaDragStart: null,
 
   // New-object settings from sidebar
   newPlat: { type: 'moss', w: 160, h: 22 },
@@ -58,6 +62,7 @@ function loadLevelData(idx) {
   EditorState.enemies       = deepCopy(override.enemies       ?? base.enemies);
   EditorState.flyingEnemies = deepCopy(override.flyingEnemies ?? base.flyingEnemies ?? []);
   EditorState.counters      = deepCopy(override.counters      ?? base.counters      ?? []);
+  EditorState.lavaFloor     = deepCopy(override.lavaFloor     ?? (Array.isArray(base.lavaFloor) ? base.lavaFloor : []));
 }
 
 function saveLevelData(idx) {
@@ -69,6 +74,7 @@ function saveLevelData(idx) {
     enemies:       EditorState.enemies,
     flyingEnemies: EditorState.flyingEnemies,
     counters:      EditorState.counters,
+    lavaFloor:     EditorState.lavaFloor,
   };
   localStorage.setItem('mm_level_' + idx, JSON.stringify(data));
   setStatus('Opgeslagen! Open index.html om te spelen.');
@@ -143,20 +149,25 @@ class EditorScene extends Phaser.Scene {
       }
     });
 
-    // Ground
+    // Ground — grass everywhere except lava sections
+    const inLavaSection = (x) => EditorState.lavaFloor.some(s => x >= s.x1 && x <= s.x2);
     const g = this.add.graphics();
     g.fillStyle(lvl.groundDirt, 1);
     g.fillRect(0, GROUND_Y + 8, WORLD_W, VIEW_H - GROUND_Y);
     g.fillStyle(lvl.groundFill, 1);
     g.fillRect(0, GROUND_Y + 4, WORLD_W, 12);
     g.fillStyle(lvl.groundTop, 1);
-    g.fillRect(0, GROUND_Y, WORLD_W, 8);
+    for (let x = 0; x < WORLD_W; x += 2) {
+      if (!inLavaSection(x)) g.fillRect(x, GROUND_Y, 2, 8);
+    }
     g.fillStyle(lvl.groundTop, 1);
     for (let x = 4; x < WORLD_W; x += 8) {
+      if (inLavaSection(x)) continue;
       const h = 4 + ((x * 7 + 3) % 6);
       g.fillTriangle(x, GROUND_Y, x + 3, GROUND_Y - h, x + 6, GROUND_Y);
     }
     for (let x = 60; x < WORLD_W; x += 160 + ((x * 11) % 80)) {
+      if (inLavaSection(x)) continue;
       const bw = 30 + (x % 40), bh = 18 + (x % 18);
       g.fillStyle(lvl.bushColor, 0.9);
       g.fillEllipse(x, GROUND_Y - bh / 2, bw, bh);
@@ -164,9 +175,30 @@ class EditorScene extends Phaser.Scene {
       g.fillEllipse(x - bw * 0.3,  GROUND_Y - bh * 0.6, bw * 0.5, bh * 0.6);
     }
     for (let x = 30; x < WORLD_W; x += 90 + ((x * 13) % 60)) {
+      if (inLavaSection(x)) continue;
       g.fillStyle(lvl.flowerColor, 0.85);
       g.fillCircle(x, GROUND_Y - 10, 4);
     }
+    // Lava pit fills
+    EditorState.lavaFloor.forEach(s => {
+      g.fillStyle(0x1a0000, 1);
+      g.fillRect(s.x1, GROUND_Y, s.x2 - s.x1, VIEW_H - GROUND_Y);
+      g.fillStyle(0x3a0500, 1);
+      g.fillRect(s.x1, GROUND_Y + 4, s.x2 - s.x1, 12);
+      for (let pass = 0; pass < 3; pass++) {
+        const colors = [0xff4400, 0xff6600, 0xff9900];
+        const alphas = [1, 0.7, 0.45];
+        g.fillStyle(colors[pass], alphas[pass]);
+        for (let x = s.x1; x <= s.x2; x += 14) {
+          const wave = Math.sin(x * 0.012 + pass * 1.1) * (3 + pass * 2);
+          g.fillRect(x, GROUND_Y + wave, 16, 6 - pass);
+        }
+      }
+      // Rock lips
+      g.fillStyle(lvl.groundTop, 1);
+      g.fillRect(s.x1 - 8, GROUND_Y - 4, 16, 12);
+      g.fillRect(s.x2 - 8, GROUND_Y - 4, 16, 12);
+    });
   }
 
   // ── Overlay (platforms, fireflies, powerups) ───────────────────────────────
@@ -273,6 +305,25 @@ class EditorScene extends Phaser.Scene {
       g.fillRect(ct.x - 5, ct.y - 8, 6, 2);
       g.fillRect(ct.x - 5, ct.y + 0, 6, 2);
     });
+
+    // Lava sections — bright selection overlay on top of world ground
+    EditorState.lavaFloor.forEach((s, i) => {
+      const pw = s.x2 - s.x1;
+      const isSelected = EditorState.selectedObj?.category === 'lava' && EditorState.selectedObj?.index === i;
+      g.fillStyle(0xff4400, isSelected ? 0.35 : 0.15);
+      g.fillRect(s.x1, GROUND_Y - 6, pw, VIEW_H - GROUND_Y + 6);
+      g.lineStyle(isSelected ? 3 : 2, 0xff6600, isSelected ? 1.0 : 0.6);
+      g.strokeRect(s.x1, GROUND_Y - 6, pw, 20);
+      // Handle tabs at edges
+      g.fillStyle(0xff6600, 0.8);
+      g.fillRect(s.x1, GROUND_Y - 8, 12, 6);
+      g.fillRect(s.x2 - 12, GROUND_Y - 8, 12, 6);
+      // Width label
+      if (pw > 60) {
+        g.fillStyle(0xff9900, 0.7);
+        g.fillRect((s.x1 + s.x2) / 2 - 20, GROUND_Y - 20, 40, 14);
+      }
+    });
   }
 
   _drawPlatRect(g, p, lvl, _idx) {
@@ -334,6 +385,9 @@ class EditorScene extends Phaser.Scene {
     } else if (obj._category === 'counter') {
       g.lineStyle(2, 0x8866ff, 0.95);
       g.strokeCircle(obj.x, obj.y, 18);
+    } else if (obj._category === 'lava') {
+      g.lineStyle(3, 0xff6600, 1.0);
+      g.strokeRect(obj.x1 - 2, GROUND_Y - 10, (obj.x2 - obj.x1) + 4, 28);
     } else if (obj._category === 'spike') {
       g.strokeRect(obj.x, GROUND_Y - 14, obj.w, 14);
     } else {
@@ -360,6 +414,7 @@ class EditorScene extends Phaser.Scene {
       enemy:        EditorState.enemies,
       flyingEnemy:  EditorState.flyingEnemies,
       counter:      EditorState.counters,
+      lava:         EditorState.lavaFloor,
     };
     return map[category] ?? [];
   }
@@ -409,14 +464,18 @@ class EditorScene extends Phaser.Scene {
 
     // Check if clicking an existing object → start drag
     const hit = this._hitTest(wx, wy);
-    if (hit && (tool === 'place-platform' || tool === 'place-firefly' || tool === 'place-powerup' || tool === 'place-enemy' || tool === 'place-flyer' || tool === 'place-counter')) {
+    if (hit && (tool === 'place-platform' || tool === 'place-firefly' || tool === 'place-powerup' || tool === 'place-enemy' || tool === 'place-flyer' || tool === 'place-counter' || tool === 'place-lava')) {
       // Select and begin drag
       EditorState.selectedObj = { category: hit.category, index: hit.index };
       this._updateSelectionHighlight();
       this._updateSelectedPanel();
       const obj = this._getArray(hit.category)[hit.index];
       this.isDragging = true;
-      this.dragObj = { category: hit.category, index: hit.index, startObjX: obj.x, startObjY: obj.y, startMX: wx, startMY: wy };
+      if (hit.category === 'lava') {
+        this.dragObj = { category: 'lava', index: hit.index, startObjX: obj.x1, startObjY: GROUND_Y, startMX: wx, startMY: wy, sectionWidth: obj.x2 - obj.x1 };
+      } else {
+        this.dragObj = { category: hit.category, index: hit.index, startObjX: obj.x, startObjY: obj.y, startMX: wx, startMY: wy };
+      }
       setStatus('Verslepen…');
       return;
     }
@@ -428,6 +487,12 @@ class EditorScene extends Phaser.Scene {
     else if (tool === 'place-enemy')   this._placeEnemy(wx, wy);
     else if (tool === 'place-flyer')   this._placeFlyer(wx, wy);
     else if (tool === 'place-counter') this._placeCounter(wx, wy);
+    else if (tool === 'place-lava') {
+      // Start a drag to define the section width
+      EditorState.lavaDragStart = snapToGrid(wx, EditorState.gridSize);
+      this.isDragging = true;
+      this.dragObj = { category: '_lava_draw', startMX: wx };
+    }
   }
 
   _onPointerMove(pointer) {
@@ -435,6 +500,20 @@ class EditorScene extends Phaser.Scene {
     const wy = this._worldY(pointer);
 
     if (this.isDragging && this.dragObj) {
+      // Lava draw drag
+      if (this.dragObj.category === '_lava_draw') {
+        const x1 = Math.min(EditorState.lavaDragStart, snapToGrid(wx, EditorState.gridSize));
+        const x2 = Math.max(EditorState.lavaDragStart, snapToGrid(wx, EditorState.gridSize));
+        const g  = this.ghostGfx;
+        g.clear();
+        g.fillStyle(0xff4400, 0.3);
+        g.fillRect(x1, GROUND_Y - 6, x2 - x1, 28);
+        g.lineStyle(2, 0xff6600, 0.9);
+        g.strokeRect(x1, GROUND_Y - 6, x2 - x1, 28);
+        setStatus(`Lava sectie: x1=${x1}  x2=${x2}  breedte=${x2 - x1}`);
+        return;
+      }
+
       const arr = this._getArray(this.dragObj.category);
       const obj = arr[this.dragObj.index];
       const dx = wx - this.dragObj.startMX;
@@ -445,6 +524,18 @@ class EditorScene extends Phaser.Scene {
         const deltaX = newX - obj.x;
         obj.minX += deltaX;
         obj.maxX += deltaX;
+      }
+      if (this.dragObj.category === 'lava') {
+        // Move the whole section
+        const dx2 = newX - obj.x1;
+        obj.x2 = obj.x1 + (obj.x2 - obj.x1); // keep width
+        obj.x1 = newX;
+        obj.x2 = newX + this.dragObj.sectionWidth;
+        this._buildWorld();
+        this._buildOverlay();
+        this._updateSelectionHighlight();
+        setStatus(`Lava sectie: x1=${obj.x1}  x2=${obj.x2}`);
+        return;
       }
       obj.x = newX;
       obj.y = newY;
@@ -458,12 +549,33 @@ class EditorScene extends Phaser.Scene {
     this._drawGhost(wx, wy);
   }
 
-  _onPointerUp(_pointer) {
+  _onPointerUp(pointer) {
     if (this.isDragging) {
+      if (this.dragObj && this.dragObj.category === '_lava_draw') {
+        // Commit lava section
+        const wx = this._worldX(pointer);
+        const x1 = Math.min(EditorState.lavaDragStart, snapToGrid(wx, EditorState.gridSize));
+        const x2 = Math.max(EditorState.lavaDragStart, snapToGrid(wx, EditorState.gridSize));
+        if (x2 - x1 >= 32) {
+          EditorState.lavaFloor.push({ x1, x2 });
+          EditorState.selectedObj = { category: 'lava', index: EditorState.lavaFloor.length - 1 };
+          this._buildWorld();
+          this._buildOverlay();
+          this._updateSelectionHighlight();
+          this._updateSelectedPanel();
+          setStatus(`Lava sectie toegevoegd: x1=${x1}  x2=${x2}`);
+        } else {
+          setStatus('Te klein — sleep verder om een lava sectie te maken.');
+        }
+        this.ghostGfx.clear();
+        EditorState.lavaDragStart = null;
+      } else {
+        this._buildWorld();
+        this._buildOverlay();
+        setStatus('Losgelaten. Vergeet niet op te slaan!');
+      }
       this.isDragging = false;
       this.dragObj    = null;
-      this._redrawOverlay();
-      setStatus('Losgelaten. Vergeet niet op te slaan!');
     }
   }
 
@@ -515,6 +627,15 @@ class EditorScene extends Phaser.Scene {
       g.strokeCircle(sx, sy, 14);
       g.lineStyle(1, 0x5500ff, 0.2);
       g.strokeCircle(sx, sy, 110);
+    } else if (tool === 'place-lava') {
+      // Show a small preview marker at ground level
+      const minW = 120;
+      g.fillStyle(0xff4400, 0.25);
+      g.fillRect(sx - minW / 2, GROUND_Y - 6, minW, 28);
+      g.lineStyle(2, 0xff6600, 0.7);
+      g.strokeRect(sx - minW / 2, GROUND_Y - 6, minW, 28);
+      g.fillStyle(0xff9900, 0.6);
+      g.fillRect(sx - 4, GROUND_Y - 12, 8, 8);
     } else if (tool === 'delete') {
       g.fillStyle(0xff3333, 0.3);
       g.fillCircle(sx, sy, 14);
@@ -560,6 +681,14 @@ class EditorScene extends Phaser.Scene {
 
   _hitTest(wx, wy) {
     // Test in reverse order: topmost drawn first
+    // Lava sections — click within the top-edge band (GROUND_Y - 10 to GROUND_Y + 20)
+    if (wy >= GROUND_Y - 12 && wy <= GROUND_Y + 24) {
+      for (let i = EditorState.lavaFloor.length - 1; i >= 0; i--) {
+        const s = EditorState.lavaFloor[i];
+        if (wx >= s.x1 - 8 && wx <= s.x2 + 8)
+          return { category: 'lava', index: i };
+      }
+    }
     // Counters (r=14)
     for (let i = EditorState.counters.length - 1; i >= 0; i--) {
       const ct = EditorState.counters[i];
@@ -651,16 +780,19 @@ class EditorScene extends Phaser.Scene {
     if (cat === 'enemy')       desc = `Vijand  x=${obj.x}  y=${obj.y}  snelheid=${obj.speed}`;
     if (cat === 'flyingEnemy') desc = `Flyer  x=${obj.x}  y=${obj.y}  snelheid=${obj.speed}`;
     if (cat === 'counter')     desc = `Counter  x=${obj.x}  y=${obj.y}  chase=${obj.chaseSpeed ?? 28}  r=${obj.proximityR ?? 110}  tick=${Math.round((obj.tickInterval ?? 333) / 100) / 10}s`;
+    if (cat === 'lava')        desc = `Lava sectie  x1=${obj.x1}  x2=${obj.x2}  breedte=${obj.x2 - obj.x1}`;
     infoEl.textContent = desc;
 
     const enemyFlds   = document.getElementById('selected-enemy-fields');
     const flyerFlds   = document.getElementById('selected-flyer-fields');
     const counterFlds = document.getElementById('selected-counter-fields');
+    const lavaFlds    = document.getElementById('selected-lava-fields');
 
     platFlds.classList.add('hidden');
     if (enemyFlds)   enemyFlds.classList.add('hidden');
     if (flyerFlds)   flyerFlds.classList.add('hidden');
     if (counterFlds) counterFlds.classList.add('hidden');
+    if (lavaFlds)    lavaFlds.classList.add('hidden');
 
     if (isPlatform) {
       platFlds.classList.remove('hidden');
@@ -704,7 +836,25 @@ class EditorScene extends Phaser.Scene {
         if (sProx)  { sProx.value  = obj.proximityR  ?? 110; document.getElementById('sel-counter-prox-val').textContent  = obj.proximityR  ?? 110; }
         if (sTick)  { sTick.value  = tickSec;                 document.getElementById('sel-counter-tick-val').textContent  = tickSec; }
       }
+    } else if (cat === 'lava') {
+      if (lavaFlds) {
+        lavaFlds.classList.remove('hidden');
+        const sx1 = document.getElementById('sel-lava-x1');
+        const sx2 = document.getElementById('sel-lava-x2');
+        if (sx1) { sx1.value = obj.x1; document.getElementById('sel-lava-x1-val').textContent = obj.x1; }
+        if (sx2) { sx2.value = obj.x2; document.getElementById('sel-lava-x2-val').textContent = obj.x2; }
+      }
     }
+  }
+
+  applySelectedLavaProp(prop, val) {
+    const sel = EditorState.selectedObj;
+    if (!sel || sel.category !== 'lava') return;
+    EditorState.lavaFloor[sel.index][prop] = val;
+    this._buildWorld();
+    this._buildOverlay();
+    this._updateSelectionHighlight();
+    this._updateSelectedPanel();
   }
 
   applySelectedCounterProp(prop, val) {
@@ -834,6 +984,7 @@ fetch('levels.json')
   .then(r => r.json())
   .then(data => {
     LEVELS = data;
+    window.LEVELS = LEVELS;
     // Populate the level dropdown now that LEVELS is available
     const sel = document.getElementById('level-select');
     if (sel && sel.children.length === 0) {
@@ -908,16 +1059,18 @@ document.querySelectorAll('.tool-btn').forEach(btn => {
     const panEnemy   = document.getElementById('panel-enemy');
     const panFlyer   = document.getElementById('panel-flyer');
     const panCounter = document.getElementById('panel-counter');
+    const panLava    = document.getElementById('panel-lava');
     panPlat.classList.toggle('hidden',    EditorState.tool !== 'place-platform');
     panPu.classList.toggle('hidden',      EditorState.tool !== 'place-powerup');
     panEnemy.classList.toggle('hidden',   EditorState.tool !== 'place-enemy');
     panFlyer.classList.toggle('hidden',   EditorState.tool !== 'place-flyer');
     panCounter.classList.toggle('hidden', EditorState.tool !== 'place-counter');
+    if (panLava) panLava.classList.toggle('hidden', EditorState.tool !== 'place-lava');
 
     // Cursor class on container
     const c = document.getElementById('game-container');
     c.className = '';
-    if (EditorState.tool === 'place-platform' || EditorState.tool === 'place-firefly' || EditorState.tool === 'place-powerup' || EditorState.tool === 'place-enemy' || EditorState.tool === 'place-flyer' || EditorState.tool === 'place-counter')
+    if (EditorState.tool === 'place-platform' || EditorState.tool === 'place-firefly' || EditorState.tool === 'place-powerup' || EditorState.tool === 'place-enemy' || EditorState.tool === 'place-flyer' || EditorState.tool === 'place-counter' || EditorState.tool === 'place-lava')
       c.classList.add('tool-place');
     else if (EditorState.tool === 'delete')
       c.classList.add('tool-delete');
@@ -1070,8 +1223,7 @@ document.getElementById('btn-reset').addEventListener('click', () => {
   setStatus('Level teruggezet naar standaard.');
 });
 
-document.getElementById('btn-clear-all').addEventListener('click', () => {
-  if (!confirm('Alle objecten uit dit level verwijderen? (Platforms, vijanden, vuurvliegjes, powerups, spikes)')) return;
+document.getElementById('btn-clear-all').addEventListener('click', () => {  if (!confirm('Alle objecten uit dit level verwijderen? (Platforms, vijanden, vuurvliegjes, powerups, spikes)')) return;
   EditorState.platforms     = [];
   EditorState.spikes        = [];
   EditorState.fireflies     = [];
@@ -1079,11 +1231,29 @@ document.getElementById('btn-clear-all').addEventListener('click', () => {
   EditorState.enemies       = [];
   EditorState.flyingEnemies = [];
   EditorState.counters      = [];
+  EditorState.lavaFloor     = [];
   EditorState.selectedObj   = null;
   withScene(s => {
     s.selGfx.clear();
-    s._redrawOverlay();
+    s._buildWorld();
+    s._buildOverlay();
     s._updateSelectedPanel();
   });
   setStatus('Alle objecten verwijderd. Vergeet niet op te slaan!');
 });
+
+// ── Selected lava controls ─────────────────────────────────────────────────────
+const selLavaX1 = document.getElementById('sel-lava-x1');
+const selLavaX2 = document.getElementById('sel-lava-x2');
+if (selLavaX1) {
+  selLavaX1.addEventListener('input', e => {
+    document.getElementById('sel-lava-x1-val').textContent = e.target.value;
+    withScene(s => s.applySelectedLavaProp('x1', parseInt(e.target.value)));
+  });
+}
+if (selLavaX2) {
+  selLavaX2.addEventListener('input', e => {
+    document.getElementById('sel-lava-x2-val').textContent = e.target.value;
+    withScene(s => s.applySelectedLavaProp('x2', parseInt(e.target.value)));
+  });
+}
