@@ -5,5 +5,13 @@
   { "id": "reduced_jump",    "category": "harder",  "label_key": "mod_reduced_jump",    "desc_key": "mod_reduced_jump_desc",    "icon": "down"  },
   { "id": "high_jump",       "category": "easier",  "label_key": "mod_high_jump",       "desc_key": "mod_high_jump_desc",       "icon": "up"    },
   { "id": "speed_run",       "category": "twist",   "label_key": "mod_speed_run",       "desc_key": "mod_speed_run_desc",       "icon": "clock" },
-  { "id": "slippery_ground", "category": "twist",   "label_key": "mod_slippery",        "desc_key": "mod_slippery_desc",        "icon": "ice"   }
+  { "id": "slippery_ground", "category": "twist",   "label_key": "mod_slippery",        "desc_key": "mod_slippery_desc",        "icon": "ice"   },
+  { "id": "slow_flyers",    "category": "easier",  "label_key": "mod_slow_flyers",     "desc_key": "mod_slow_flyers_desc",     "icon": "wing"       },
+  { "id": "slow_counters",  "category": "easier",  "label_key": "mod_slow_counters",   "desc_key": "mod_slow_counters_desc",   "icon": "timer_down" },
+  { "id": "investment",     "category": "easier",  "label_key": "mod_investment",      "desc_key": "mod_investment_desc",      "icon": "coin"       },
+  { "id": "less_enemies",   "category": "easier",  "label_key": "mod_less_enemies",    "desc_key": "mod_less_enemies_desc",    "icon": "minus"      },
+  { "id": "early_lava",     "category": "harder",  "label_key": "mod_early_lava",      "desc_key": "mod_early_lava_desc",      "icon": "flame"      },
+  { "id": "fast_counters",  "category": "harder",  "label_key": "mod_fast_counters",   "desc_key": "mod_fast_counters_desc",   "icon": "timer_up"   },
+  { "id": "flashbang",      "category": "harder",  "label_key": "mod_flashbang",       "desc_key": "mod_flashbang_desc",       "icon": "flash"      },
+  { "id": "sleeper",        "category": "entity",  "label_key": "mod_sleeper",         "desc_key": "mod_sleeper_desc",         "icon": "eye"        }
 ]

@@ -293,6 +293,22 @@ const SoundManager = (() => {
     _osc('sine', 120, t, 0.3, 0.5, 0.01);
   }
 
+  /** Stalagmite warning: sharp crack + deep rumble — something is about to fall */
+  function sfxStalagmiteWarning() {
+    _ensureCtx();
+    const t = ctx.currentTime;
+    // Deep stone-crack rumble (loud)
+    _noise(t, 0.25, 1.1, 0.01, 260);
+    _osc('sine', 80, t, 0.30, 0.9, 0.01);
+    _osc('sine', 55, t + 0.02, 0.28, 0.7, 0.01);
+    // Sharp initial crack transient
+    _noise(t, 0.05, 1.3, 0.01, 1200);
+    // Urgent high-pitched drip ticks
+    _osc('triangle', 1600, t + 0.04, 0.07, 0.8, 0.01);
+    _osc('triangle', 1200, t + 0.09, 0.07, 0.65, 0.01);
+    _osc('triangle', 900,  t + 0.14, 0.06, 0.5, 0.01);
+  }
+
   /** Double-jump air puff */
   function sfxDoubleJump() {
     _ensureCtx();
@@ -326,6 +342,7 @@ const SoundManager = (() => {
     sfxCounterTick,
     sfxCounterExplode,
     sfxLava,
+    sfxStalagmiteWarning,
   };
 })();
 

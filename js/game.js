@@ -26,12 +26,14 @@ function T(key, ...args) {
 // ??? Modifier state ???????????????????????????????????????????????????????????
 // Persists across levels within a run; reset on full restart
 if (!window.activeModifiers) window.activeModifiers = [];
+if (!window.fireflyBank)     window.fireflyBank     = 0; // carried-over fireflies
 let MODIFIERS_DATA = [];
 
-function hasMod(id) { return window.activeModifiers.includes(id); }
+function countMod(id) { return window.activeModifiers.filter(m => m === id).length; }
+function hasMod(id)   { return countMod(id) > 0; }
 
 // ??? Mobile input bridge ??????????????????????????????????????????????????????
-const mobileInput = { left: false, right: false, jump: false };
+const mobileInput = { left: false, right: false, jump: false, axisX: 0 };
 
 // ??? Level definitions ????????????????????????????????????????????????????????
 let LEVELS = [];
@@ -51,6 +53,7 @@ class GameScene extends Phaser.Scene {
     this.firefliesTotal     = 0;
     this.gameOver           = false;
     this.isHurt             = false;
+    this._halfHurt          = false;
     this.powerupList        = [];
     this.counterList        = [];
     this.lavaKillCooldown   = 0;
@@ -65,15 +68,23 @@ class GameScene extends Phaser.Scene {
     this._speedRunTime  = 0;
     this._speedRunLimit = 90000; // 90 seconds default
 
-    // Apply extra_life modifier
-    if (hasMod('extra_life')) {
-      this.playerLives = Math.min(5, this.playerLives + 1);
-    }
+    // Apply extra_life modifier (each stack = +1 life)
+    this.playerLives = Math.min(5, this.playerLives + countMod('extra_life'));
+    this._investmentLives = this.playerLives; // snapshot for investment check
 
     const _saved = localStorage.getItem('mm_level_' + this.currentLevel);
-    const lvl = _saved
+    let lvl = _saved
       ? { ...LEVELS[this.currentLevel], ...JSON.parse(_saved) }
       : LEVELS[this.currentLevel];
+
+    // early_lava: inject extra lava pits before building the world
+    if (hasMod('early_lava')) {
+      const existing = Array.isArray(lvl.lavaFloor) ? lvl.lavaFloor : [];
+      const extras   = Array.from({ length: countMod('early_lava') }, (_, i) => ({
+        x1: 600 + i * 800, x2: 750 + i * 800,
+      }));
+      lvl = { ...lvl, lavaFloor: [...existing, ...extras] };
+    }
 
     this.physics.world.setBounds(0, 0, WORLD_W, VIEW_H);
 
@@ -86,12 +97,16 @@ class GameScene extends Phaser.Scene {
     this.createPowerups(lvl);
     this.createCollectibles(lvl);
     this.createShovel(lvl);
+    this.createExitPortal(lvl);
     this.createEnemies(lvl);
     this.createFlyingEnemies(lvl);
     this.createCounters(lvl);
     this.createPlayer(lvl);
     this.createAmbientDecoration(lvl);
+    this.createStalagmites(lvl);
     this.setupCollisions();
+    this.createSleeperEntity();
+    this.createFlashbangEffect();
 
     this.cursors = this.input.keyboard.createCursorKeys();
     this.wasd = {
@@ -392,6 +407,20 @@ class GameScene extends Phaser.Scene {
       g.fillStyle(0xfff0a0, 0.7); g.fillTriangle(11, 22, 17, 22, 13, 29);
       g.generateTexture('shovel', 32, 36); g.destroy();
     }
+
+    if (!this.textures.exists('stalactite')) {
+      const g = this.add.graphics();
+      g.fillStyle(0x7a6a58, 1);
+      g.fillTriangle(0, 0, 20, 0, 10, 58);
+      g.fillStyle(0x9a8878, 0.55);
+      g.fillTriangle(1, 0, 8, 0, 4, 36);
+      g.fillStyle(0x4a3a2a, 1);
+      g.fillTriangle(6, 42, 14, 42, 10, 58);
+      g.fillStyle(0xc0a888, 0.25);
+      g.fillTriangle(3, 0, 7, 0, 4, 22);
+      g.generateTexture('stalactite', 20, 58);
+      g.destroy();
+    }
   }
 
   createAnimations() {
@@ -410,29 +439,61 @@ class GameScene extends Phaser.Scene {
     sky.fillGradientStyle(lvl.bgTop, lvl.bgTop, lvl.bgBottom, lvl.bgBottom, 1);
     sky.fillRect(0, 0, VIEW_W, VIEW_H);
 
-    for (let i = 0; i < 70; i++) {
-      const x = (i * 137 + 42) % VIEW_W;
-      const y = (i * 97  + 17) % (VIEW_H * 0.68);
-      const r = (i % 3 === 0) ? 1.5 : 1;
-      const star = this.add.circle(x, y, r, 0xf5f0d8, 0.15 + (i%5)*0.07).setScrollFactor(0);
-      this.tweens.add({ targets: star, alpha: 0.05, duration: 1200+(i%7)*400, yoyo:true, repeat:-1, delay:(i%11)*180 });
-    }
+    const layerSpeeds = [0.05, 0.12, 0.22];
 
-    const moonGlow = this.add.circle(VIEW_W - 100, 68, 68, lvl.moonColor, 0.07).setScrollFactor(0);
-    this.tweens.add({ targets: moonGlow, alpha: 0.15, duration: 2800, yoyo:true, repeat:-1 });
-    this.add.circle(VIEW_W - 100, 68, 44, lvl.moonColor, 0.92).setScrollFactor(0);
-
-    const layerSpeeds  = [0.05, 0.12, 0.22];
-    const layerHeights = [220, 170, 130];
-    lvl.paralaxTrees.forEach((color, li) => {
-      const g = this.add.graphics().setScrollFactor(layerSpeeds[li]);
-      g.fillStyle(color, 1);
-      for (let t = 0; t < Math.ceil(WORLD_W / 80) + 2; t++) {
-        const tx = t * 78 + (li * 26);
-        const th = layerHeights[li] + ((t * 37 + li * 13) % 60);
-        g.fillTriangle(tx, VIEW_H, tx + 36, VIEW_H - th, tx + 72, VIEW_H);
+    if (lvl.isCave) {
+      // Glowing crystal specks on ceiling instead of stars
+      for (let i = 0; i < 55; i++) {
+        const x = (i * 137 + 42) % VIEW_W;
+        const y = (i * 97  + 17) % (VIEW_H * 0.55);
+        const r = (i % 4 === 0) ? 2 : 1;
+        const speck = this.add.circle(x, y, r, lvl.moonColor, 0.08 + (i%5)*0.04).setScrollFactor(0);
+        this.tweens.add({ targets: speck, alpha: 0.02, duration: 1400+(i%7)*400, yoyo:true, repeat:-1, delay:(i%11)*180 });
       }
-    });
+
+      // Crystal accent in corner instead of moon
+      const cx = VIEW_W - 90, cy = 55;
+      this.add.circle(cx, cy, 36, lvl.moonColor, 0.04).setScrollFactor(0);
+      const crystalGlow = this.add.circle(cx, cy, 22, lvl.moonColor, 0.5).setScrollFactor(0);
+      this.tweens.add({ targets: crystalGlow, alpha: 0.7, duration: 2800, yoyo:true, repeat:-1 });
+
+      // Parallax stalactite formations hanging from the ceiling
+      const stalHeights = [130, 100, 75];
+      lvl.paralaxTrees.forEach((color, li) => {
+        const g = this.add.graphics().setScrollFactor(layerSpeeds[li]);
+        g.fillStyle(color, 1);
+        for (let t = 0; t < Math.ceil(WORLD_W / 70) + 2; t++) {
+          const tx = t * 68 + (li * 22);
+          const th = stalHeights[li] + ((t * 37 + li * 13) % 40);
+          // Stalactites hang DOWN from y=0
+          g.fillTriangle(tx, 0, tx + 32, 0, tx + 16, th);
+        }
+      });
+    } else {
+      // Stars
+      for (let i = 0; i < 70; i++) {
+        const x = (i * 137 + 42) % VIEW_W;
+        const y = (i * 97  + 17) % (VIEW_H * 0.68);
+        const r = (i % 3 === 0) ? 1.5 : 1;
+        const star = this.add.circle(x, y, r, 0xf5f0d8, 0.15 + (i%5)*0.07).setScrollFactor(0);
+        this.tweens.add({ targets: star, alpha: 0.05, duration: 1200+(i%7)*400, yoyo:true, repeat:-1, delay:(i%11)*180 });
+      }
+
+      const moonGlow = this.add.circle(VIEW_W - 100, 68, 68, lvl.moonColor, 0.07).setScrollFactor(0);
+      this.tweens.add({ targets: moonGlow, alpha: 0.15, duration: 2800, yoyo:true, repeat:-1 });
+      this.add.circle(VIEW_W - 100, 68, 44, lvl.moonColor, 0.92).setScrollFactor(0);
+
+      const layerHeights = [220, 170, 130];
+      lvl.paralaxTrees.forEach((color, li) => {
+        const g = this.add.graphics().setScrollFactor(layerSpeeds[li]);
+        g.fillStyle(color, 1);
+        for (let t = 0; t < Math.ceil(WORLD_W / 80) + 2; t++) {
+          const tx = t * 78 + (li * 26);
+          const th = layerHeights[li] + ((t * 37 + li * 13) % 60);
+          g.fillTriangle(tx, VIEW_H, tx + 36, VIEW_H - th, tx + 72, VIEW_H);
+        }
+      });
+    }
   }
 
   createGround(lvl) {
@@ -446,7 +507,6 @@ class GameScene extends Phaser.Scene {
 
   _createGrassGround(lvl, lavaSections) {
     const g = this.add.graphics();
-    // Helper: is x within a lava section?
     const inLava = (x) => lavaSections.some(s => x >= s.x1 && x <= s.x2);
 
     g.fillStyle(lvl.groundDirt, 1);
@@ -454,31 +514,63 @@ class GameScene extends Phaser.Scene {
     g.fillStyle(lvl.groundFill, 1);
     g.fillRect(0, GROUND_Y + 4, WORLD_W, 12);
 
-    // Grass top strip and blades ? skipping lava sections
-    g.fillStyle(lvl.groundTop, 1);
-    for (let x = 0; x < WORLD_W; x += 2) {
-      if (!inLava(x)) g.fillRect(x, GROUND_Y, 2, 8);
-    }
-    for (let x = 4; x < WORLD_W; x += 8) {
-      if (inLava(x)) continue;
-      const h = 4 + ((x * 7 + 3) % 6);
-      g.fillTriangle(x, GROUND_Y, x + 3, GROUND_Y - h, x + 6, GROUND_Y);
-    }
-    for (let x = 60; x < WORLD_W; x += 160 + ((x * 11) % 80)) {
-      if (inLava(x)) continue;
-      const bw = 30 + (x % 40);
-      const bh = 18 + (x % 18);
-      g.fillStyle(lvl.bushColor, 0.9);
-      g.fillEllipse(x, GROUND_Y - bh / 2, bw, bh);
-      g.fillEllipse(x + bw * 0.35, GROUND_Y - bh * 0.7, bw * 0.6, bh * 0.7);
-      g.fillEllipse(x - bw * 0.3,  GROUND_Y - bh * 0.6, bw * 0.5, bh * 0.6);
-    }
-    for (let x = 30; x < WORLD_W; x += 90 + ((x * 13) % 60)) {
-      if (inLava(x)) continue;
-      g.fillStyle(lvl.flowerColor, 0.85);
-      g.fillCircle(x, GROUND_Y - 10, 4);
-      g.fillStyle(0xffffff, 0.4);
-      g.fillCircle(x, GROUND_Y - 10, 2);
+    if (lvl.isCave) {
+      // Rocky/jagged cave floor surface
+      g.fillStyle(lvl.groundTop, 1);
+      for (let x = 0; x < WORLD_W; x += 2) {
+        if (!inLava(x)) g.fillRect(x, GROUND_Y, 2, 8);
+      }
+      // Jagged rock teeth on floor
+      for (let x = 6; x < WORLD_W; x += 14 + ((x * 5) % 10)) {
+        if (inLava(x)) continue;
+        const h = 3 + ((x * 11 + 7) % 7);
+        g.fillStyle(lvl.groundTop, 0.85);
+        g.fillTriangle(x, GROUND_Y, x + 5, GROUND_Y - h, x + 10, GROUND_Y);
+      }
+      // Rock clusters near ground
+      for (let x = 80; x < WORLD_W; x += 140 + ((x * 11) % 90)) {
+        if (inLava(x)) continue;
+        const rw = 18 + (x % 22);
+        const rh = 10 + (x % 12);
+        g.fillStyle(lvl.bushColor, 0.85);
+        g.fillEllipse(x, GROUND_Y - rh * 0.4, rw, rh);
+        g.fillEllipse(x + rw * 0.4, GROUND_Y - rh * 0.3, rw * 0.5, rh * 0.55);
+      }
+      // Crystal formations
+      for (let x = 40; x < WORLD_W; x += 110 + ((x * 17) % 70)) {
+        if (inLava(x)) continue;
+        g.fillStyle(lvl.flowerColor, 0.6);
+        const ch = 6 + (x % 9);
+        g.fillTriangle(x - 3, GROUND_Y, x + 3, GROUND_Y, x, GROUND_Y - ch);
+        g.fillTriangle(x + 5, GROUND_Y, x + 10, GROUND_Y, x + 7, GROUND_Y - ch * 0.7);
+      }
+    } else {
+      // Grass top strip and blades
+      g.fillStyle(lvl.groundTop, 1);
+      for (let x = 0; x < WORLD_W; x += 2) {
+        if (!inLava(x)) g.fillRect(x, GROUND_Y, 2, 8);
+      }
+      for (let x = 4; x < WORLD_W; x += 8) {
+        if (inLava(x)) continue;
+        const h = 4 + ((x * 7 + 3) % 6);
+        g.fillTriangle(x, GROUND_Y, x + 3, GROUND_Y - h, x + 6, GROUND_Y);
+      }
+      for (let x = 60; x < WORLD_W; x += 160 + ((x * 11) % 80)) {
+        if (inLava(x)) continue;
+        const bw = 30 + (x % 40);
+        const bh = 18 + (x % 18);
+        g.fillStyle(lvl.bushColor, 0.9);
+        g.fillEllipse(x, GROUND_Y - bh / 2, bw, bh);
+        g.fillEllipse(x + bw * 0.35, GROUND_Y - bh * 0.7, bw * 0.6, bh * 0.7);
+        g.fillEllipse(x - bw * 0.3,  GROUND_Y - bh * 0.6, bw * 0.5, bh * 0.6);
+      }
+      for (let x = 30; x < WORLD_W; x += 90 + ((x * 13) % 60)) {
+        if (inLava(x)) continue;
+        g.fillStyle(lvl.flowerColor, 0.85);
+        g.fillCircle(x, GROUND_Y - 10, 4);
+        g.fillStyle(0xffffff, 0.4);
+        g.fillCircle(x, GROUND_Y - 10, 2);
+      }
     }
 
     // Cover lava pit areas with a dark base
@@ -651,17 +743,300 @@ class GameScene extends Phaser.Scene {
     this.shovel = s;
   }
 
+  createExitPortal(lvl) {
+    const px = lvl.exitX ?? (WORLD_W - 80);
+    const py = GROUND_Y - 40;
+
+    if (lvl.exitType === 'shovel') {
+      // Shovel exit: use the shovel sprite with golden glow
+      const s = this.add.image(px, py + 4, 'shovel').setOrigin(0.5).setDepth(5).setScale(1.6);
+      this.tweens.add({
+        targets: s, y: py - 10,
+        duration: 1000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+      });
+      const ring = this.add.circle(px, py + 16, 22, 0xf0d060, 0.2).setDepth(4);
+      this.tweens.add({
+        targets: ring, alpha: { from: 0.08, to: 0.5 }, scale: { from: 0.8, to: 1.2 },
+        duration: 1000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+      });
+      for (let i = 0; i < 5; i++) {
+        const spark = this.add.circle(
+          px + Phaser.Math.Between(-14, 14),
+          py + Phaser.Math.Between(-22, 18),
+          Phaser.Math.Between(2, 4), 0xf0d060, 0.8
+        ).setDepth(5);
+        this.tweens.add({
+          targets: spark, alpha: 0, y: spark.y - Phaser.Math.Between(16, 40),
+          duration: Phaser.Math.Between(700, 1400), delay: Phaser.Math.Between(0, 1000),
+          repeat: -1, yoyo: false,
+          onRepeat: () => {
+            spark.x = px + Phaser.Math.Between(-14, 14);
+            spark.y = py + Phaser.Math.Between(-8, 18);
+            spark.alpha = 0.8;
+          },
+        });
+      }
+      this.add.text(px, py - 54, T('hud_exit') || 'EXIT', {
+        fontSize: '12px', fontFamily: 'Georgia', color: '#f0d060',
+      }).setOrigin(0.5).setDepth(5);
+    } else {
+      // Glowing portal
+      const g = this.add.graphics().setDepth(4);
+      const drawPortal = (phase) => {
+        g.clear();
+        const glow = 0.18 + Math.sin(phase) * 0.10;
+        g.fillStyle(0x44ffcc, glow);
+        g.fillEllipse(px, py, 52, 72);
+        g.lineStyle(3, 0x88ffee, 0.7 + Math.sin(phase) * 0.3);
+        g.strokeEllipse(px, py, 52, 72);
+        g.lineStyle(2, 0xffffff, 0.4);
+        g.strokeEllipse(px, py, 38, 56);
+      };
+      drawPortal(0);
+      let phase = 0;
+      this._portalTimer = this.time.addEvent({
+        delay: 30, loop: true,
+        callback: () => { phase += 0.08; drawPortal(phase); },
+      });
+      for (let i = 0; i < 6; i++) {
+        const spark = this.add.circle(
+          px + Phaser.Math.Between(-18, 18),
+          py + Phaser.Math.Between(-28, 28),
+          Phaser.Math.Between(2, 5), 0x88ffee, 0.8
+        ).setDepth(5);
+        this.tweens.add({
+          targets: spark, alpha: 0, y: spark.y - Phaser.Math.Between(20, 50),
+          duration: Phaser.Math.Between(800, 1600), delay: Phaser.Math.Between(0, 1200),
+          repeat: -1, yoyo: false,
+          onRepeat: () => {
+            spark.x = px + Phaser.Math.Between(-18, 18);
+            spark.y = py + Phaser.Math.Between(-10, 28);
+            spark.alpha = 0.8;
+          },
+        });
+      }
+      this.add.text(px, py - 50, T('hud_exit') || 'EXIT', {
+        fontSize: '12px', fontFamily: 'Georgia', color: '#88ffee', alpha: 0.8,
+      }).setOrigin(0.5).setDepth(5);
+    }
+
+    // Physics sensor (same regardless of visual)
+    const sensor = this.add.rectangle(px, py, 40, 60).setVisible(false).setDepth(4);
+    this.physics.add.existing(sensor, true);
+    this.exitPortalSensor = sensor;
+  }
+
+  createStalagmites(lvl) {
+    // Always create the group so setupCollisions can reference it safely
+    this._stalagmiteGroup = this.physics.add.group();
+    if (!lvl.stalagmites || !lvl.stalagmites.length) return;
+
+    // Draw static decorative ceiling stalactites at each drop point
+    const ceilG = this.add.graphics().setDepth(3);
+    lvl.stalagmites.forEach(s => {
+      const w = 18 + ((s.x * 7 + 11) % 14);
+      const h = 28 + ((s.x * 11 + 7) % 28);
+      ceilG.fillStyle(0x5a4a38, 1);
+      ceilG.fillTriangle(s.x - w / 2, 0, s.x + w / 2, 0, s.x, h);
+      ceilG.fillStyle(0x7a6a58, 0.45);
+      ceilG.fillTriangle(s.x - w * 0.28, 0, s.x + w * 0.05, 0, s.x - w * 0.08, h * 0.55);
+    });
+
+    // Track which positions haven't been used yet
+    const pending = lvl.stalagmites.map(s => ({ x: s.x, dropped: false }));
+
+    // Expose pending list so update() can check proximity
+    this._stalPending = pending;
+
+    this._stalDrop = (target) => {
+      target.dropped = true;
+      if (window.SoundManager) SoundManager.sfxStalagmiteWarning();
+      const spr = this.physics.add.image(target.x, -280, 'stalactite')
+        .setOrigin(0.5, 0).setDepth(6);
+      spr.body.setAllowGravity(true);
+      spr.body.setGravityY(2200);
+      spr.body.setVelocityY(350);
+      spr.body.setSize(14, 52);
+      spr.body.setOffset(3, 3);
+      this._stalagmiteGroup.add(spr);
+    };
+  }
+
+  createFlashbangEffect() {
+    if (!hasMod('flashbang')) return;
+
+    // Epilepsy warning banner
+    const warnBg = this.add.rectangle(VIEW_W / 2, VIEW_H / 2, VIEW_W, 64, 0xcc2200, 0.92)
+      .setScrollFactor(0).setDepth(1002);
+    const warnTxt = this.add.text(VIEW_W / 2, VIEW_H / 2, '⚠  ' + T('mod_flashbang_desc'), {
+      fontSize: '13px', fontFamily: 'Georgia, serif', color: '#ffffff',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(1003);
+    this.time.delayedCall(3500, () => { warnBg.destroy(); warnTxt.destroy(); });
+
+    // Full-screen overlay used for rapid flashes
+    const overlay = this.add.rectangle(VIEW_W / 2, VIEW_H / 2, VIEW_W, VIEW_H, 0xffffff, 0)
+      .setScrollFactor(0).setDepth(996);
+
+    const _runSequence = () => {
+      if (this.gameOver) return;
+      const totalFlips = 8 + countMod('flashbang') * 4;
+      let step = 0;
+      const doStep = () => {
+        if (step >= totalFlips) {
+          overlay.setFillStyle(0xffffff, 0);
+          const next = Phaser.Math.Between(7000, 14000);
+          this.time.delayedCall(next, _runSequence);
+          return;
+        }
+        const bright = step % 2 === 0;
+        overlay.setFillStyle(bright ? 0xffffff : 0x000000, bright ? 0.88 : 0.78);
+        step++;
+        this.time.delayedCall(65, doStep);
+      };
+      doStep();
+    };
+
+    const firstDelay = Phaser.Math.Between(8000, 14000);
+    this.time.delayedCall(firstDelay, _runSequence);
+  }
+
+  createSleeperEntity() {
+    this._sleeperAwake   = false;
+    this._sleeperHurtAt  = -9999;
+
+    if (!hasMod('sleeper')) return;
+
+    const SX = 46, SY = 52, R = 22;
+    const lerpColor = (r0, g0, b0, r1, g1, b1, t) =>
+      (((r0 + (r1 - r0) * t) | 0) << 16) |
+      (((g0 + (g1 - g0) * t) | 0) << 8)  |
+       ((b0 + (b1 - b0) * t) | 0);
+
+    this.add.rectangle(SX, SY - 2, 60, 58, 0x0a0514, 0.88)
+      .setScrollFactor(0).setDepth(199).setStrokeStyle(1, 0x6622aa, 0.7);
+
+    const g = this.add.graphics().setScrollFactor(0).setDepth(200);
+
+    // t = 0 → fully asleep, t = 1 → fully awake
+    const _draw = (t) => {
+      g.clear();
+
+      // Face colour fades from dim purple to bright purple
+      g.fillStyle(lerpColor(0x33, 0x11, 0x66,  0x55, 0x22, 0xbb,  t), 1);
+      g.fillCircle(SX, SY, R);
+      g.lineStyle(2, lerpColor(0x77, 0x33, 0xcc,  0xcc, 0x66, 0xff,  t), 1);
+      g.strokeCircle(SX, SY, R);
+
+      // Eye opening: height goes from 1 (thin slit) to 10 (fully open)
+      const eyeH = 1 + t * 9;
+      const eyeColor = lerpColor(0x44, 0x22, 0x66,  0xff, 0xcc, 0x00,  t);
+      g.fillStyle(eyeColor, 1);
+      g.fillEllipse(SX - 8, SY - 4, 12, eyeH);
+      g.fillEllipse(SX + 8, SY - 4, 12, eyeH);
+
+      // Iris and pupil visible only once eyes are noticeably open
+      if (t > 0.45) {
+        const pupilAlpha = Math.min(1, (t - 0.45) / 0.35);
+        g.fillStyle(0x110022, pupilAlpha);
+        g.fillCircle(SX - 8, SY - 4, 3 * t);
+        g.fillCircle(SX + 8, SY - 4, 3 * t);
+        g.fillStyle(0xffffff, 0.8 * pupilAlpha);
+        g.fillCircle(SX - 6, SY - 6, 1.5);
+        g.fillCircle(SX + 10, SY - 6, 1.5);
+      }
+
+      // Mouth: smile arc fades out while flat line fades in
+      g.lineStyle(2, lerpColor(0x99, 0x55, 0xdd,  0xcc, 0x66, 0xff,  t), 0.85);
+      if (t < 0.5) {
+        // Smile
+        g.beginPath();
+        g.arc(SX, SY + 6, 7, Phaser.Math.DegToRad(20), Phaser.Math.DegToRad(160));
+        g.strokePath();
+      } else {
+        // Tense flat line
+        g.lineBetween(SX - 6, SY + 10, SX + 6, SY + 10);
+      }
+    };
+
+    _draw(0);
+
+    // Tween helper: animate t between current and target value
+    let _currentT = 0;
+    const _transitionTo = (targetT, duration, onComplete) => {
+      const startT = _currentT;
+      this.tweens.addCounter({
+        from: 0, to: 100, duration,
+        ease: 'Sine.easeInOut',
+        onUpdate: (tween) => {
+          _currentT = startT + (targetT - startT) * (tween.getValue() / 100);
+          _draw(_currentT);
+        },
+        onComplete,
+      });
+    };
+
+    // "Z z z" while asleep
+    const zText = this.add.text(SX + 22, SY - 22, 'z z', {
+      fontSize: '9px', fontFamily: 'Georgia', color: '#9955dd', alpha: 0.7,
+    }).setScrollFactor(0).setDepth(200);
+    this.tweens.add({ targets: zText, y: zText.y - 6, alpha: 0, duration: 1800, yoyo: true, repeat: -1 });
+
+    const warnText = this.add.text(SX, SY + R + 10, '⚠ STOP ⚠', {
+      fontSize: '9px', fontFamily: 'Georgia', color: '#ffcc00',
+      backgroundColor: '#33000099', padding: { x: 3, y: 2 },
+    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200).setVisible(false);
+
+    // Cycle: sleep → eyes open transition → awake → eyes close transition → repeat
+    const _cycle = () => {
+      if (this.gameOver) return;
+      const sleepMs = Phaser.Math.Between(4000, 8000) / Math.max(1, countMod('sleeper'));
+      this.time.delayedCall(sleepMs, () => {
+        if (this.gameOver) return;
+        // Eyes opening (640 ms)
+        zText.setVisible(false);
+        _transitionTo(1, 640, () => {
+          if (this.gameOver) return;
+          this._sleeperAwake = true;
+          warnText.setVisible(true);
+
+          const awakeMs = Phaser.Math.Between(2000, 4000);
+          this.time.delayedCall(awakeMs, () => {
+            if (this.gameOver) return;
+            // Stop punishing immediately as eyes begin closing
+            this._sleeperAwake = false;
+            warnText.setVisible(false);
+            // Eyes closing (100 ms — snap shut)
+            _transitionTo(0, 100, () => {
+              if (this.gameOver) return;
+              zText.setVisible(true);
+              _cycle();
+            });
+          });
+        });
+      });
+    };
+    _cycle();
+  }
+
   createEnemies(lvl) {
     this.enemies = this.physics.add.group();
-    const speedMult = hasMod('fast_enemies') ? 1.4 : hasMod('slow_enemies') ? 0.6 : 1;
-    lvl.enemies.forEach(p => {
+    const speedMult  = Math.pow(1.4, countMod('fast_enemies')) * Math.pow(0.6, countMod('slow_enemies'));
+    const skipCount  = Math.min(countMod('less_enemies'), Math.max(0, lvl.enemies.length - 1));
+    const enemyList  = lvl.enemies.slice(0, lvl.enemies.length - skipCount);
+    enemyList.forEach(p => {
       const e = this.add.sprite(p.x, p.y, 'enemy_0').setOrigin(0.5);
       e.play('enemy_wobble');
-      e.setData({ minX: p.minX, maxX: p.maxX, speed: p.speed * speedMult });
+      e.setData({ minX: p.minX, maxX: p.maxX, speed: p.speed * speedMult, dir: 1 });
       this.enemies.add(e);
       this.physics.add.existing(e);
       e.body.setAllowGravity(false);
-      e.body.setVelocityX(p.speed * speedMult);
+      // Pick initial direction based on spawn position relative to patrol midpoint
+      const initSpd = p.speed * speedMult;
+      const midX = (p.minX + p.maxX) / 2;
+      const initDir = p.x <= midX ? 1 : -1;
+      e.setData('dir', initDir);
+      e.body.setVelocityX(initSpd * initDir);
+      e.setFlipX(initDir < 0);
       e.body.setSize(26, 26);
       e.body.setOffset(11, 10);
     });
@@ -670,7 +1045,7 @@ class GameScene extends Phaser.Scene {
   createFlyingEnemies(lvl) {
     this.flyingEnemies = this.physics.add.group();
     this.bullets       = this.physics.add.group();
-    const speedMult = hasMod('fast_enemies') ? 1.4 : hasMod('slow_enemies') ? 0.6 : 1;
+    const speedMult = Math.pow(1.4, countMod('fast_enemies')) * Math.pow(0.6, countMod('slow_enemies'));
     (lvl.flyingEnemies ?? []).forEach(p => {
       const fe = this.add.sprite(p.x, p.y, 'flyer_0').setOrigin(0.5);
       fe.play('flyer_flap');
@@ -682,11 +1057,20 @@ class GameScene extends Phaser.Scene {
       this.flyingEnemies.add(fe);
       this.physics.add.existing(fe);
       fe.body.setAllowGravity(false);
-      fe.body.setVelocityX(p.speed * speedMult);
+      // Pick initial direction based on spawn position relative to patrol midpoint
+      const feInitSpd = p.speed * speedMult;
+      const feMidX = (p.minX + p.maxX) / 2;
+      const feInitDir = p.x <= feMidX ? 1 : -1;
+      fe.setData('dir', feInitDir);
+      fe.body.setVelocityX(feInitSpd * feInitDir);
+      fe.setFlipX(feInitDir < 0);
       fe.body.setSize(30, 22);
       fe.body.setOffset(5, 5);
+      // slow_flyers: each stack adds 2s to the base cooldown (base 8s → 10s per stack)
+      const baseInterval = p.shootInterval ?? 8000;
+      const shootDelay   = baseInterval + countMod('slow_flyers') * 2000;
       this.time.addEvent({
-        delay: p.shootInterval ?? 8000,
+        delay: shootDelay,
         loop: true,
         callback: () => { if (!fe.active || this.gameOver) return; this._flyerShoot(fe); },
       });
@@ -723,9 +1107,12 @@ class GameScene extends Phaser.Scene {
       });
       this.counterList.push({
         sprite, count: 0, lastTick: 0,
+        triggered:    false,
         chaseSpeed:   p.chaseSpeed   ?? 28,
         proximityR:   p.proximityR   ?? 110,
-        tickInterval: p.tickInterval ?? 333,
+        tickInterval: (p.tickInterval ?? 333)
+          * Math.pow(1.5, countMod('slow_counters'))
+          / Math.pow(1.5, countMod('fast_counters')),
       });
     });
   }
@@ -856,7 +1243,8 @@ class GameScene extends Phaser.Scene {
 
   setupCollisions() {
     this.physics.add.collider(this.player, this.platforms);
-    this.physics.add.collider(this.enemies, this.platforms);
+    // Note: enemies do NOT collide with platforms — they patrol at a fixed y
+    // set in level data, so platform side-walls would block them.
 
     // Lava kill zones (per section)
     (this._lavaZones || []).forEach(zone => {
@@ -896,12 +1284,34 @@ class GameScene extends Phaser.Scene {
       if (this.firefliesCollected >= this.firefliesTotal) this.winLevel();
     });
 
+    // Exit portal — reach it to complete the level
+    if (this.exitPortalSensor) {
+      this.physics.add.overlap(this.player, this.exitPortalSensor, () => {
+        if (this.gameOver) return;
+        this.winLevel();
+      });
+    }
+
     if (this.shovel) {
       this.physics.add.overlap(this.player, this.shovel, () => {
         if (!this.shovel || !this.shovel.active) return;
         this.shovel.destroy();
         this.shovel = null;
         this.scene.get('UIScene').showLockedLevel();
+      });
+    }
+
+    // Falling stalagmites: stop on platforms, hurt player on contact
+    if (this._stalagmiteGroup) {
+      this.physics.add.collider(this._stalagmiteGroup, this.platforms, (stal) => {
+        if (!stal.active || !stal.body || stal.getData('landed')) return;
+        stal.setData('landed', true);
+        stal.body.setAllowGravity(false);
+        stal.body.setVelocity(0, 0);
+      });
+      this.physics.add.overlap(this.player, this._stalagmiteGroup, (_pl, stal) => {
+        if (!stal.active || this.gameOver || this.isHurt) return;
+        this.hurtPlayer(false);
       });
     }
 
@@ -975,9 +1385,12 @@ class GameScene extends Phaser.Scene {
 
   hurtPlayer(fatal) {
     if (this.playerLives <= 0) return;
+    // Standing still while the Sleeper watches grants full immunity
+    if (this._sleeperAwake && Math.abs(this.player.body.velocity.x) <= 15) return;
     this.isHurt = true;
     this.playerLives--;
-    this.scene.get('UIScene').updateLives(this.playerLives);
+    this._halfHurt = false;
+    this.scene.get('UIScene').updateLives(this.playerLives, false);
     this.cameras.main.flash(150, fatal ? 220 : 160, 40, 40);
     this.player.body.setVelocity(-80, -280);
     if (window.SoundManager) SoundManager.sfxLoseLife();
@@ -992,19 +1405,52 @@ class GameScene extends Phaser.Scene {
   }
 
   winLevel() {
+    if (this.gameOver) return;
     this.gameOver = true;
     this.physics.pause();
     if (window.SoundManager) SoundManager.sfxLevelComplete();
+
+    // Add this level's fireflies to the persistent bank
+    window.fireflyBank = (window.fireflyBank || 0) + this.firefliesCollected;
+
+    // Investment bonus: +30 fireflies per stack if no lives were lost this level
+    if (hasMod('investment') && this.playerLives >= this._investmentLives) {
+      const bonus = 30 * countMod('investment');
+      window.fireflyBank += bonus;
+      this._cheatToast('+' + bonus + ' ✦ ' + T('mod_investment'));
+    }
+
     const next = this.currentLevel + 1;
     if (next < LEVELS.length) {
-      // Show modifier picker before advancing
       this.scene.setVisible(false, 'UIScene');
       this.scene.launch('ModifierScene', {
         nextLevel: next,
         lives: this.playerLives,
+        fireflyBank: window.fireflyBank,
       });
     } else {
       this.scene.get('UIScene').showVictory();
+    }
+  }
+
+  _applySleeperHalfHurt() {
+    if (this._halfHurt) {
+      // Second half-hit: consume the buffer and lose a full heart
+      this._halfHurt = false;
+      this.cameras.main.shake(180, 0.012);
+      this.hurtPlayer(false);
+    } else {
+      // First half-hit: store the buffer and show it in the HUD
+      this._halfHurt = true;
+      this.cameras.main.shake(90, 0.006);
+      if (window.SoundManager) SoundManager.sfxLoseLife();
+      this.scene.get('UIScene').updateLives(this.playerLives, true);
+      // Brief flicker but shorter than a full hurt
+      this.isHurt = true;
+      this.tweens.add({
+        targets: this.player, alpha: 0.5, duration: 80, yoyo: true, repeat: 2,
+        onComplete: () => { this.isHurt = false; },
+      });
     }
   }
 
@@ -1019,6 +1465,27 @@ class GameScene extends Phaser.Scene {
 
   update(time, delta) {
     if (this.gameOver || !this.player.active) return;
+
+    // Sleeper entity: moving while eyes open = full heart; standing still = immune to all damage
+    if (this._sleeperAwake && hasMod('sleeper') && !this.isHurt) {
+      if (Math.abs(this.player.body.velocity.x) > 15 &&
+          time - this._sleeperHurtAt > 800) {
+        this._sleeperHurtAt = time;
+        this._halfHurt = false;
+        this.cameras.main.shake(180, 0.012);
+        this.hurtPlayer(false);
+      }
+    }
+
+    // Proximity-triggered stalagmites: drop when player steps within 50px
+    if (this._stalPending && this.player) {
+      const px = this.player.x;
+      this._stalPending.forEach(s => {
+        if (!s.dropped && Math.abs(s.x - px) <= 50) {
+          this._stalDrop(s);
+        }
+      });
+    }
 
     // Animate lava surface
     if (this._lavaGraphics) {
@@ -1052,7 +1519,15 @@ class GameScene extends Phaser.Scene {
     // Slippery ground modifier ? reduce deceleration
     const friction = hasMod('slippery_ground') ? 0.88 : 0;
 
-    if (goLeft) {
+    // Analogue axis from the joystick strip (-1..+1), 0 when not active
+    const axisX = mobileInput.axisX || 0;
+
+    if (axisX !== 0) {
+      // Mobile analogue: scale speed continuously by axis factor
+      this.player.body.setVelocityX(baseSpeed * axisX);
+      this.player.setFlipX(axisX < 0);
+      this.player.play('player_walk', true);
+    } else if (goLeft) {
       this.player.body.setVelocityX(-baseSpeed);
       this.player.setFlipX(true);
       this.player.play('player_walk', true);
@@ -1070,9 +1545,11 @@ class GameScene extends Phaser.Scene {
     }
 
     // Jump velocity with modifier
-    const jumpV   = hasMod('reduced_jump') ? -368 : hasMod('high_jump') ? -575 : -460;
-    const dJumpV  = hasMod('reduced_jump') ? -344 : hasMod('high_jump') ? -537 : -430;
-    const cutV    = hasMod('reduced_jump') ? -144 : hasMod('high_jump') ? -225 : -180;
+    // Jump heights stack: each high_jump ×1.12, each reduced_jump ×0.85
+    const jumpScale = Math.pow(1.12, countMod('high_jump')) * Math.pow(0.85, countMod('reduced_jump'));
+    const jumpV   = Math.round(-460 * jumpScale);
+    const dJumpV  = Math.round(-430 * jumpScale);
+    const cutV    = Math.round(-180 * jumpScale);
 
     if (jumpJustDown) {
       if (onGround) {
@@ -1105,21 +1582,28 @@ class GameScene extends Phaser.Scene {
     // Enemy patrol
     this.enemies.getChildren().forEach(e => {
       if (!e.active || !e.body) return;
-      const minX = e.getData('minX'), maxX = e.getData('maxX'), spd = e.getData('speed');
-      const vx = e.body.velocity.x;
-      if (e.x <= minX && vx <= 0) { e.body.setVelocityX(spd);  e.setFlipX(false); }
-      if (e.x >= maxX && vx >= 0) { e.body.setVelocityX(-spd); e.setFlipX(true);  }
+      const minX = e.getData('minX'), maxX = e.getData('maxX');
+      const spd  = e.getData('speed');
+      let   dir  = e.getData('dir') ?? 1;
+      // Use half sprite width (24px) so the visual edge doesn't overshoot
+      const hw = 24;
+      if (e.x - hw <= minX && dir < 0) { dir =  1; e.setData('dir', dir); e.setFlipX(false); }
+      else if (e.x + hw >= maxX && dir > 0) { dir = -1; e.setData('dir', dir); e.setFlipX(true);  }
+      e.body.setVelocityX(spd * dir);
     });
 
     // Flying enemy patrol
     const t = this.time.now / 1000;
     this.flyingEnemies.getChildren().forEach(fe => {
       if (!fe.active || !fe.body) return;
-      const minX = fe.getData('minX'), maxX = fe.getData('maxX'), spd = fe.getData('speed');
+      const minX = fe.getData('minX'), maxX = fe.getData('maxX');
+      const spd  = fe.getData('speed');
+      let   dir  = fe.getData('dir') ?? 1;
       const baseY = fe.getData('baseY'), hoverT = fe.getData('hoverT');
-      const vx = fe.body.velocity.x;
-      if (fe.x <= minX && vx <= 0) { fe.body.setVelocityX(spd);  fe.setFlipX(false); }
-      if (fe.x >= maxX && vx >= 0) { fe.body.setVelocityX(-spd); fe.setFlipX(true);  }
+      const hw = 20;
+      if (fe.x - hw <= minX && dir < 0) { dir =  1; fe.setData('dir', dir); fe.setFlipX(false); }
+      else if (fe.x + hw >= maxX && dir > 0) { dir = -1; fe.setData('dir', dir); fe.setFlipX(true);  }
+      fe.body.setVelocityX(spd * dir);
       fe.y = baseY + Math.sin(t * 2.2 + hoverT) * 18;
     });
 
@@ -1135,7 +1619,8 @@ class GameScene extends Phaser.Scene {
         c.sprite.x += (dx / dist) * c.chaseSpeed * (delta / 1000);
         c.sprite.y += (dy / dist) * c.chaseSpeed * (delta / 1000);
       }
-      if (dist < c.proximityR && now - c.lastTick >= c.tickInterval && !this.isHurt) {
+      if (dist < c.proximityR) c.triggered = true;
+      if (c.triggered && now - c.lastTick >= c.tickInterval && !this.isHurt) {
         c.lastTick = now;
         c.count = Math.min(5, c.count + 1);
         c.sprite.setTexture('counter_' + c.count);
@@ -1144,10 +1629,13 @@ class GameScene extends Phaser.Scene {
         if (c.count >= 5) {
           const ex = this.add.circle(c.sprite.x, c.sprite.y, 40, 0x5500ff, 0.8);
           this.tweens.add({ targets: ex, alpha: 0, scale: 3, duration: 450, onComplete: () => ex.destroy() });
+          const explodeDx = this.player.x - c.sprite.x;
+          const explodeDy = this.player.y - c.sprite.y;
+          const explodeDist = Math.sqrt(explodeDx * explodeDx + explodeDy * explodeDy);
           c.sprite.destroy();
           deadCounters.push(c);
           if (window.SoundManager) SoundManager.sfxCounterExplode();
-          if (!this.isHurt && !this.gameOver) this.hurtPlayer(false);
+          if (explodeDist <= c.proximityR * 2 && !this.isHurt && !this.gameOver) this.hurtPlayer(false);
         }
       }
     });
@@ -1168,130 +1656,263 @@ class ModifierScene extends Phaser.Scene {
   constructor() { super({ key: 'ModifierScene' }); }
 
   init(data) {
-    this.nextLevel = data.nextLevel;
-    this.lives     = data.lives;
+    this.nextLevel     = data.nextLevel;
+    this.lives         = data.lives;
+    this.bank          = data.fireflyBank ?? window.fireflyBank ?? 0;
+    window.fireflyBank = this.bank;
   }
 
   create() {
     const W = VIEW_W, H = VIEW_H;
 
-    // Dim overlay
-    this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.75).setScrollFactor(0);
+    // Reward/cost by category
+    const CAT = {
+      easier: { cost: -15, label: T('shop_cost')        || '-15 ✦', color: 0x33bb66, hex: '#33bb66', hoverFill: 0x0e2218 },
+      harder: { cost:   5, label: T('shop_earn_neg')    || '+5 ✦',  color: 0xdd3333, hex: '#dd3333', hoverFill: 0x280e0e },
+      twist:  { cost:   3, label: T('shop_earn_twi')    || '+3 ✦',  color: 0x3388ff, hex: '#3388ff', hoverFill: 0x0e1828 },
+      entity: { cost:  25, label: T('shop_earn_entity') || '+25 ✦', color: 0xbb44ff, hex: '#bb44ff', hoverFill: 0x1a0828 },
+    };
 
-    this.add.text(W / 2, 60, T('mod_pick_title'), {
-      fontSize: '28px', fontFamily: 'Georgia', color: '#ffeeaa',
+    this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.82);
+
+    this.add.text(W / 2, 28, T('shop_title') || '✦ Firefly Shop ✦', {
+      fontSize: '24px', fontFamily: 'Georgia', color: '#ffeeaa',
     }).setOrigin(0.5);
 
-    this.add.text(W / 2, 100, T('mod_pick_sub'), {
-      fontSize: '14px', fontFamily: 'Georgia', color: '#aabb88',
+    this._bankText = this.add.text(W / 2, 60, '', {
+      fontSize: '14px', fontFamily: 'Georgia', color: '#88ffaa',
     }).setOrigin(0.5);
+    this._updateBank();
 
-    // Pick 3 random modifiers (exclude already active)
-    const pool = MODIFIERS_DATA.filter(m => !window.activeModifiers.includes(m.id));
-    const picks = [];
-    const used  = new Set();
-    while (picks.length < 3 && picks.length < pool.length) {
-      const idx = Math.floor(Math.random() * pool.length);
-      if (!used.has(idx)) { used.add(idx); picks.push(pool[idx]); }
-    }
-    // If pool is exhausted, allow repeats (shouldn't normally happen with 8 mods)
-    while (picks.length < 3) picks.push(MODIFIERS_DATA[picks.length % MODIFIERS_DATA.length]);
+    // Legend
+    const legendY = 82;
+    [
+      { label: T('shop_legend_easier') || 'Upgrade  -15✦', hex: '#33bb66' },
+      { label: T('shop_legend_harder') || 'Curse  +5✦',    hex: '#dd5555' },
+      { label: T('shop_legend_twist')  || 'Twist  +3✦',    hex: '#5599ff' },
+      { label: T('shop_legend_entity') || 'Entity  +25✦',  hex: '#bb44ff' },
+    ].forEach((l, i) => {
+      this.add.text(W/2 - 300 + i * 200, legendY, l.label, {
+        fontSize: '11px', fontFamily: 'Georgia', color: l.hex,
+      }).setOrigin(0.5);
+    });
 
-    const cardW = 200, cardH = 230, gap = 24;
+    // --- Build card pool: exactly 1 per category, random pick, stacks allowed ---
+    const shuffle = arr => {
+      const a = arr.slice();
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    };
+
+    const pickOne = cat => {
+      const pool = shuffle(MODIFIERS_DATA.filter(m => m.category === cat));
+      return pool[0] ?? null;
+    };
+
+    const picks = [pickOne('easier'), pickOne('harder'), pickOne('twist'), pickOne('entity')].filter(Boolean);
+
+    // Layout: up to 4 cards in a single row, centered
+    const cardW = 168, cardH = 220, gap = 16;
     const totalW = picks.length * cardW + (picks.length - 1) * gap;
     const startX = (W - totalW) / 2;
+    const startY = 110;
+
+    this._cards = [];
 
     picks.forEach((mod, i) => {
-      const cx = startX + i * (cardW + gap);
-      const cy = 160;
+      const cx  = startX + i * (cardW + gap);
+      const cy  = startY;
+      const cat = CAT[mod.category];
 
-      const catColors = { harder: 0xdd3333, easier: 0x33bb66, twist: 0x3388ff };
-      const catColor  = catColors[mod.category] || 0x888888;
-      const catHex    = '#' + catColor.toString(16).padStart(6, '0');
-
-      // Card background
       const card = this.add.rectangle(cx + cardW/2, cy + cardH/2, cardW, cardH, 0x0a1628, 1)
-        .setStrokeStyle(2, catColor);
+        .setStrokeStyle(2, cat.color);
 
-      // Icon (drawn with graphics)
-      this._drawModIcon(cx + cardW/2, cy + 50, mod.icon, catColor);
+      this._drawModIcon(cx + cardW/2, cy + 44, mod.icon, cat.color);
 
-      // Title
-      this.add.text(cx + cardW/2, cy + 100, T(mod.label_key), {
-        fontSize: '15px', fontFamily: 'Georgia', color: catHex,
-        wordWrap: { width: cardW - 20 }, align: 'center',
+      this.add.text(cx + cardW/2, cy + 82, T(mod.label_key), {
+        fontSize: '14px', fontFamily: 'Georgia', color: cat.hex,
+        wordWrap: { width: cardW - 16 }, align: 'center',
       }).setOrigin(0.5, 0);
 
-      // Description
-      this.add.text(cx + cardW/2, cy + 130, T(mod.desc_key), {
-        fontSize: '12px', fontFamily: 'Georgia', color: '#99aacc',
-        wordWrap: { width: cardW - 20 }, align: 'center',
+      this.add.text(cx + cardW/2, cy + 108, T(mod.desc_key), {
+        fontSize: '11px', fontFamily: 'Georgia', color: '#99aacc',
+        wordWrap: { width: cardW - 16 }, align: 'center',
       }).setOrigin(0.5, 0);
 
-      // Category label
-      this.add.text(cx + cardW/2, cy + cardH - 30, mod.category.toUpperCase(), {
-        fontSize: '10px', fontFamily: 'Georgia', color: catHex,
-        letterSpacing: 2,
+      // Action label (cost/reward)
+      const actionText = this.add.text(cx + cardW/2, cy + cardH - 36, cat.label, {
+        fontSize: '13px', fontFamily: 'Georgia', color: cat.hex, fontStyle: 'bold',
       }).setOrigin(0.5, 0);
 
-      // Click zone
+      // Stack count badge — shows how many times already active
+      const stackBadge = this.add.text(cx + cardW - 10, cy + 8, '', {
+        fontSize: '11px', fontFamily: 'Georgia', color: cat.hex,
+        backgroundColor: '#0a1628', padding: { x: 4, y: 2 },
+      }).setOrigin(1, 0);
+
       const zone = this.add.rectangle(cx + cardW/2, cy + cardH/2, cardW, cardH, 0xffffff, 0)
         .setInteractive({ useHandCursor: true });
 
-      zone.on('pointerover', () => card.setFillStyle(0x162840));
+      const cardData = { card, zone, actionText, stackBadge, mod, cat, usedThisVisit: false };
+      this._cards.push(cardData);
+
+      zone.on('pointerover', () => {
+        if (this._canInteract(cardData)) card.setFillStyle(cat.hoverFill);
+      });
       zone.on('pointerout',  () => card.setFillStyle(0x0a1628));
-      zone.on('pointerdown', () => this._selectModifier(mod));
+      zone.on('pointerdown', () => this._interact(cardData));
+
+      this._refreshCard(cardData);
     });
 
-    // Skip option
-    const skipText = this.add.text(W / 2, H - 50, '? ' + T('mod_pick_title') + ' ?', {
-      fontSize: '13px', fontFamily: 'Georgia', color: '#556655',
+    // Continue button
+    const contBtn = this.add.text(W / 2, H - 36, T('shop_continue') || '▶ Continue to next level', {
+      fontSize: '14px', fontFamily: 'Georgia', color: '#88dd88',
+      backgroundColor: '#0e2218', padding: { x: 16, y: 9 },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-    skipText.setText('? Skip ?');
-    skipText.on('pointerover', () => skipText.setColor('#88aa88'));
-    skipText.on('pointerout',  () => skipText.setColor('#556655'));
-    skipText.on('pointerdown', () => this._advance());
+    contBtn.on('pointerover', () => contBtn.setColor('#ccffcc'));
+    contBtn.on('pointerout',  () => contBtn.setColor('#88dd88'));
+    contBtn.on('pointerdown', () => this._advance());
+  }
+
+  _updateBank() {
+    this._bankText.setText('✦ ' + this.bank + ' fireflies');
+  }
+
+  // Can the player interact with this card?
+  _canInteract(cardData) {
+    if (cardData.usedThisVisit) return false;
+    // Easier costs fireflies — need enough
+    if (cardData.mod.category === 'easier' && this.bank < 15) return false;
+    return true;
+  }
+
+  _refreshCard(cardData) {
+    const stacks = countMod(cardData.mod.id);
+    const canDo  = this._canInteract(cardData);
+    // Stack badge shows total stacks across all levels
+    cardData.stackBadge.setText(stacks > 0 ? '×' + stacks : '');
+    cardData.card.setAlpha(canDo ? 1 : 0.4);
+    cardData.card.setStrokeStyle(2, cardData.usedThisVisit ? 0x226622 :
+                                    canDo ? cardData.cat.color : 0x334433);
+    if (canDo) {
+      cardData.zone.setInteractive({ useHandCursor: true });
+    } else {
+      cardData.zone.removeInteractive();
+    }
+    // Show a checkmark overlay when used this visit
+    cardData.actionText.setText(cardData.usedThisVisit ? '✓' : cardData.cat.label);
+    cardData.actionText.setColor(cardData.usedThisVisit ? '#44ff88' : cardData.cat.hex);
+  }
+
+  _interact(cardData) {
+    const mod = cardData.mod;
+    if (!this._canInteract(cardData)) return;
+
+    cardData.usedThisVisit = true;
+    window.activeModifiers.push(mod.id);
+
+    if (mod.category === 'easier') {
+      this.bank -= 15;
+      if (mod.id === 'extra_life') this.lives = Math.min(5, this.lives + 1);
+    } else if (mod.category === 'harder') {
+      this.bank += 5;
+    } else if (mod.category === 'twist') {
+      this.bank += 3;
+    } else if (mod.category === 'entity') {
+      this.bank += 25;
+    }
+
+    window.fireflyBank = this.bank;
+    this._updateBank();
+    this._cards.forEach(c => this._refreshCard(c));
+
+    // Flash feedback
+    const flashColor = mod.category === 'easier' ? 0x1a4a2a :
+                       mod.category === 'harder'  ? 0x4a1a1a :
+                       mod.category === 'entity'  ? 0x280a40 : 0x1a2a4a;
+    this.tweens.add({
+      targets: cardData.card, duration: 180, yoyo: true,
+      onStart:    () => cardData.card.setFillStyle(flashColor),
+      onComplete: () => cardData.card.setFillStyle(0x0a1628),
+    });
   }
 
   _drawModIcon(cx, cy, icon, color) {
     const g = this.add.graphics();
-    g.fillStyle(color, 0.25); g.fillCircle(cx, cy, 28);
-    g.lineStyle(2, color, 0.7); g.strokeCircle(cx, cy, 28);
+    g.fillStyle(color, 0.25); g.fillCircle(cx, cy, 22);
+    g.lineStyle(2, color, 0.7); g.strokeCircle(cx, cy, 22);
     g.fillStyle(color, 0.9);
     switch (icon) {
       case 'sword':
-        g.fillRect(cx - 2, cy - 18, 4, 30); g.fillRect(cx - 10, cy - 4, 20, 4); break;
+        g.fillRect(cx - 2, cy - 14, 4, 22); g.fillRect(cx - 8, cy - 2, 16, 4); break;
       case 'snail':
-        g.fillCircle(cx, cy + 4, 12); g.fillRect(cx - 14, cy + 6, 8, 6); break;
+        g.fillCircle(cx, cy + 3, 9); g.fillRect(cx - 10, cy + 4, 6, 5); break;
       case 'heart':
-        g.fillCircle(cx - 5, cy, 9); g.fillCircle(cx + 5, cy, 9);
-        g.fillTriangle(cx - 13, cy + 4, cx + 13, cy + 4, cx, cy + 18); break;
+        g.fillCircle(cx - 4, cy - 1, 7); g.fillCircle(cx + 4, cy - 1, 7);
+        g.fillTriangle(cx - 10, cy + 3, cx + 10, cy + 3, cx, cy + 13); break;
       case 'down':
-        g.fillTriangle(cx, cy + 16, cx - 12, cy - 4, cx + 12, cy - 4); break;
+        g.fillTriangle(cx, cy + 12, cx - 9, cy - 3, cx + 9, cy - 3); break;
       case 'up':
-        g.fillTriangle(cx, cy - 16, cx - 12, cy + 4, cx + 12, cy + 4); break;
+        g.fillTriangle(cx, cy - 12, cx - 9, cy + 3, cx + 9, cy + 3); break;
       case 'clock':
-        g.strokeCircle(cx, cy, 16);
-        g.fillRect(cx - 1, cy - 12, 2, 13); g.fillRect(cx, cy - 1, 10, 2); break;
-      case 'flip':
-        g.fillTriangle(cx, cy - 16, cx - 12, cy, cx + 12, cy);
-        g.fillTriangle(cx, cy + 16, cx - 12, cy, cx + 12, cy); break;
+        g.strokeCircle(cx, cy, 12);
+        g.fillRect(cx - 1, cy - 8, 2, 9); g.fillRect(cx, cy - 1, 7, 2); break;
       case 'ice':
-        g.fillRect(cx - 16, cy - 2, 32, 4);
-        g.fillRect(cx - 2, cy - 16, 4, 32);
-        g.fillRect(cx - 12, cy - 12, 4, 4); g.fillRect(cx + 8, cy - 12, 4, 4);
-        g.fillRect(cx - 12, cy + 8, 4, 4);  g.fillRect(cx + 8, cy + 8, 4, 4); break;
+        g.fillRect(cx - 12, cy - 2, 24, 4); g.fillRect(cx - 2, cy - 12, 4, 24);
+        g.fillRect(cx - 9, cy - 9, 3, 3); g.fillRect(cx + 6, cy - 9, 3, 3); break;
+      case 'wing':
+        g.fillTriangle(cx - 2, cy, cx - 14, cy - 10, cx - 14, cy + 6);
+        g.fillTriangle(cx + 2, cy, cx + 14, cy - 10, cx + 14, cy + 6);
+        g.fillEllipse(cx, cy + 2, 8, 14); break;
+      case 'eye':
+        g.fillEllipse(cx, cy, 26, 14);
+        g.fillStyle(0x000000, 1); g.fillCircle(cx, cy, 5);
+        g.fillStyle(color, 1);   g.fillCircle(cx + 2, cy - 2, 2);
+        g.lineStyle(1.5, color, 0.7);
+        g.lineBetween(cx - 10, cy - 6, cx - 8, cy - 10);
+        g.lineBetween(cx,      cy - 7, cx,     cy - 11);
+        g.lineBetween(cx + 10, cy - 6, cx + 8, cy - 10);
+        break;
+      case 'timer_down':
+        // Clock body
+        g.lineStyle(2, color, 0.9); g.strokeCircle(cx, cy + 2, 11);
+        g.fillRect(cx - 1, cy - 6, 2, 8); g.fillRect(cx, cy - 1, 6, 2);
+        // Down arrow below
+        g.fillTriangle(cx, cy + 16, cx - 6, cy + 8, cx + 6, cy + 8); break;
+      case 'timer_up':
+        // Clock body
+        g.lineStyle(2, color, 0.9); g.strokeCircle(cx, cy + 2, 11);
+        g.fillRect(cx - 1, cy - 6, 2, 8); g.fillRect(cx, cy - 1, 6, 2);
+        // Up arrow above
+        g.fillTriangle(cx, cy - 15, cx - 6, cy - 7, cx + 6, cy - 7); break;
+      case 'coin':
+        // Coin circle with firefly ✦ inside
+        g.lineStyle(2, color, 0.9); g.strokeCircle(cx, cy, 13);
+        g.fillCircle(cx, cy, 5);
+        g.fillStyle(0xffdd44, 1);
+        g.fillTriangle(cx, cy - 8, cx - 5, cy + 4, cx + 5, cy + 4);
+        g.fillTriangle(cx, cy + 8, cx - 5, cy - 4, cx + 5, cy - 4); break;
+      case 'minus':
+        // Enemy silhouette with minus
+        g.fillCircle(cx, cy - 6, 7);
+        g.fillRect(cx - 6, cy + 1, 12, 9);
+        g.fillStyle(0x000000, 0.8); g.fillRect(cx - 8, cy + 5, 16, 3); break;
+      case 'flame':
+        // Lava / flame shape
+        g.fillTriangle(cx, cy - 14, cx - 10, cy + 8, cx + 10, cy + 8);
+        g.fillStyle(0xffaa00, 0.9);
+        g.fillTriangle(cx, cy - 6, cx - 6, cy + 8, cx + 6, cy + 8);
+        g.fillStyle(0xffffff, 0.6); g.fillCircle(cx, cy + 4, 3); break;
+      case 'flash':
+        // Lightning bolt
+        g.fillTriangle(cx + 3, cy - 14, cx - 9, cy + 2, cx + 1, cy + 2);
+        g.fillTriangle(cx - 3, cy + 14, cx + 9, cy - 2, cx - 1, cy - 2); break;
     }
     g.destroy();
-  }
-
-  _selectModifier(mod) {
-    if (!window.activeModifiers.includes(mod.id)) {
-      window.activeModifiers.push(mod.id);
-    }
-    // apply extra_life immediately (lives bump)
-    if (mod.id === 'extra_life') this.lives = Math.min(5, this.lives + 1);
-    this._advance();
   }
 
   _advance() {
@@ -1360,6 +1981,7 @@ class UIScene extends Phaser.Scene {
       if (!this.overlay.visible) return;
       this.overlay.setVisible(false);
       window.activeModifiers = [];
+      window.fireflyBank     = 0;
       this.scene.get('GameScene').scene.restart({ level: 0, lives: 3 });
       this.scene.restart({ level: 0, lives: 3 });
     };
@@ -1437,8 +2059,10 @@ class UIScene extends Phaser.Scene {
   updateScore(collected, total) {
     this.fireflyText.setText(T('hud_fireflies', collected, total));
   }
-  updateLives(lives) {
-    this.livesText.setText('\u2665'.repeat(Math.max(0, lives)));
+  updateLives(lives, halfHurt = false) {
+    const full = '\u2665'.repeat(Math.max(0, lives)); // ♥
+    const half = halfHurt ? '\u2661' : '';            // ♡ (hollow)
+    this.livesText.setText(full + half);
   }
 }
 
@@ -1470,6 +2094,13 @@ if (typeof EDITOR_MODE === 'undefined') {
       SoundManager.loadMusic();
     }
 
+    // On mobile landscape, use EXPAND so the camera shows a wider slice of the
+    // world without stretching. On everything else, use FIT to preserve aspect ratio.
+    const _isMobileLandscape = () =>
+      window.matchMedia('(pointer: coarse) and (orientation: landscape)').matches;
+
+    const _scaleMode = _isMobileLandscape() ? Phaser.Scale.EXPAND : Phaser.Scale.FIT;
+
     new Phaser.Game({
       type: Phaser.CANVAS,
       width: VIEW_W,
@@ -1477,7 +2108,7 @@ if (typeof EDITOR_MODE === 'undefined') {
       parent: 'game-container',
       backgroundColor: '#060d1a',
       scale: {
-        mode: Phaser.Scale.FIT,
+        mode: _scaleMode,
         autoCenter: Phaser.Scale.CENTER_BOTH,
       },
       physics: {

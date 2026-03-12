@@ -30,6 +30,21 @@
       max-height: 100vh;
     }
 
+    /* Mobile landscape: toon een breder deel van de wereld, geen letterbox */
+    @media (pointer: coarse) and (orientation: landscape) {
+      html, body {
+        overflow: hidden;
+      }
+      #game-container {
+        width: 100vw !important;
+        height: 100vh !important;
+        max-width: none;
+        max-height: none;
+        border-radius: 0;
+        box-shadow: none;
+      }
+    }
+
     /* ── Language selector ───────────────────────────── */
     #lang-select-wrap {
       position: fixed;
@@ -68,6 +83,11 @@
       transition: opacity 0.2s;
     }
     #admin-toggle:hover { opacity: 1; }
+
+    /* Hide admin controls on touch devices (mobile) */
+    @media (pointer: coarse) {
+      #admin-toggle, #admin-panel { display: none !important; }
+    }
 
     /* ── Mute button ─────────────────────────────────── */
     #mute-btn {
@@ -137,6 +157,7 @@
     .admin-btn:hover { background: #1e3e1e; border-color: #55aa55; color: #aaffaa; }
     .admin-btn.danger { border-color: #5a2e2e; color: #dd8888; }
     .admin-btn.danger:hover { background: #3e1e1e; border-color: #aa5555; color: #ffaaaa; }
+    #ap-level-buttons { display: flex; flex-direction: column; gap: 8px; }
 
     /* ── Mobile touch controls ───────────────────────── */
     #mobile-controls {
@@ -145,34 +166,148 @@
       bottom: 0;
       left: 0;
       width: 100%;
-      height: 100px;
+      height: 110px;
       pointer-events: none;
       z-index: 900;
     }
     .touch-btn {
       position: absolute;
-      background: rgba(100, 220, 130, 0.15);
-      border: 2px solid rgba(100, 220, 130, 0.4);
       border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 24px;
-      color: rgba(170, 255, 170, 0.6);
       pointer-events: auto;
       user-select: none;
       -webkit-user-select: none;
       touch-action: none;
-      transition: background 0.1s;
+
+      /* Mosgroene gloed — past bij de bosgeest */
+      background: radial-gradient(circle at 38% 35%,
+        rgba(80, 200, 120, 0.22) 0%,
+        rgba(30, 80, 50, 0.38) 60%,
+        rgba(10, 30, 20, 0.55) 100%);
+      border: 2px solid rgba(100, 220, 130, 0.45);
+      box-shadow:
+        0 0 12px rgba(80, 220, 120, 0.25),
+        inset 0 1px 0 rgba(180, 255, 200, 0.12),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+
+      /* Symbool */
+      font-size: 22px;
+      color: rgba(160, 255, 180, 0.75);
+      text-shadow: 0 0 8px rgba(100, 255, 150, 0.6);
+
+      transition: background 0.08s, box-shadow 0.08s, transform 0.08s;
     }
     .touch-btn:active, .touch-btn.pressed {
-      background: rgba(100, 220, 130, 0.35);
-      border-color: rgba(170, 255, 170, 0.7);
-      color: rgba(200, 255, 200, 0.9);
+      background: radial-gradient(circle at 38% 35%,
+        rgba(120, 255, 160, 0.38) 0%,
+        rgba(40, 120, 70, 0.55) 60%,
+        rgba(10, 40, 25, 0.65) 100%);
+      border-color: rgba(160, 255, 190, 0.85);
+      box-shadow:
+        0 0 22px rgba(80, 255, 130, 0.55),
+        inset 0 1px 0 rgba(200, 255, 220, 0.2),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+      color: rgba(210, 255, 220, 1);
+      text-shadow: 0 0 14px rgba(140, 255, 170, 0.9);
+      transform: scale(0.93);
     }
-    #btn-left  { width: 72px; height: 72px; bottom: 20px; left: 24px; }
-    #btn-right { width: 72px; height: 72px; bottom: 20px; left: 108px; }
-    #btn-jump  { width: 84px; height: 84px; bottom: 14px; right: 30px; }
+
+    #btn-left  { width: 76px; height: 76px; bottom: 22px; left: 22px; display: none; }
+    #btn-right { width: 76px; height: 76px; bottom: 22px; left: 110px; display: none; }
+
+    /* ── Analogue joystick strip ─────────────────────── */
+    #joystick-strip {
+      position: absolute;
+      bottom: 18px;
+      left: 16px;
+      width: 101px;
+      height: 72px;
+      pointer-events: auto;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+
+      background: radial-gradient(ellipse at 50% 60%,
+        rgba(40, 110, 60, 0.28) 0%,
+        rgba(10, 30, 20, 0.50) 100%);
+      border: 2px solid rgba(100, 220, 130, 0.35);
+      border-radius: 36px;
+      box-shadow:
+        0 0 14px rgba(80, 220, 120, 0.18),
+        inset 0 1px 0 rgba(180, 255, 200, 0.08);
+
+      /* Direction hints */
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 18px;
+      color: rgba(140, 255, 170, 0.35);
+      font-size: 20px;
+    }
+    #joystick-strip::before { content: '◀'; }
+    #joystick-strip::after  { content: '▶'; }
+
+    /* The draggable thumb */
+    #joystick-thumb {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      pointer-events: none;
+      background: radial-gradient(circle at 38% 35%,
+        rgba(120, 255, 160, 0.38) 0%,
+        rgba(40, 120, 70, 0.55) 60%,
+        rgba(10, 40, 25, 0.65) 100%);
+      border: 2px solid rgba(160, 255, 190, 0.70);
+      box-shadow:
+        0 0 18px rgba(80, 255, 130, 0.45),
+        inset 0 1px 0 rgba(200, 255, 220, 0.15);
+      transition: left 0.05s ease-out;
+    }
+    #joystick-strip.active #joystick-thumb {
+      transition: none;
+    }
+
+    #btn-jump  {
+      width: 88px; height: 88px; bottom: 16px; right: 28px;
+      /* Jump-knop iets groter gloeien */
+      background: radial-gradient(circle at 38% 35%,
+        rgba(100, 200, 255, 0.20) 0%,
+        rgba(20, 60, 100, 0.42) 60%,
+        rgba(5, 18, 40, 0.58) 100%);
+      border-color: rgba(100, 180, 255, 0.50);
+      box-shadow:
+        0 0 14px rgba(80, 160, 255, 0.28),
+        inset 0 1px 0 rgba(180, 220, 255, 0.12),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+      color: rgba(160, 210, 255, 0.80);
+      text-shadow: 0 0 8px rgba(100, 180, 255, 0.65);
+      animation: jump-btn-pulse 2.4s ease-in-out infinite;
+    }
+    #btn-jump:active, #btn-jump.pressed {
+      background: radial-gradient(circle at 38% 35%,
+        rgba(140, 220, 255, 0.42) 0%,
+        rgba(30, 90, 160, 0.58) 60%,
+        rgba(5, 20, 50, 0.68) 100%);
+      border-color: rgba(160, 220, 255, 0.90);
+      box-shadow:
+        0 0 26px rgba(100, 200, 255, 0.60),
+        inset 0 1px 0 rgba(200, 230, 255, 0.2),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+      color: rgba(210, 235, 255, 1);
+      text-shadow: 0 0 16px rgba(140, 210, 255, 0.95);
+      animation: none;
+      transform: scale(0.93);
+    }
+    @keyframes jump-btn-pulse {
+      0%, 100% { box-shadow: 0 0 14px rgba(80, 160, 255, 0.28), inset 0 1px 0 rgba(180,220,255,0.12), inset 0 -1px 0 rgba(0,0,0,0.3); }
+      50%       { box-shadow: 0 0 26px rgba(80, 160, 255, 0.52), inset 0 1px 0 rgba(180,220,255,0.12), inset 0 -1px 0 rgba(0,0,0,0.3); }
+    }
 
     /* Show mobile controls only on touch devices */
     @media (pointer: coarse) {
@@ -255,8 +390,10 @@
 
   <!-- Mobile touch buttons -->
   <div id="mobile-controls">
-    <div class="touch-btn" id="btn-left">&#8592;</div>
-    <div class="touch-btn" id="btn-right">&#8594;</div>
+    <!-- Analogue joystick strip (replaces left/right buttons) -->
+    <div id="joystick-strip">
+      <div id="joystick-thumb"></div>
+    </div>
     <div class="touch-btn" id="btn-jump">&#8593;</div>
   </div>
 
@@ -337,10 +474,84 @@
     // mobileInput is defined in game.js; set a global reference so HTML can use it
     // The game sets window.mobileInput — we write through the same object
     // We need to set the global before game loads, so we initialise it here too
-    if (!window.mobileInput) window.mobileInput = { left: false, right: false, jump: false, _jumpJustDown: false };
-    bindTouchBtn('btn-left',  'left');
-    bindTouchBtn('btn-right', 'right');
+    if (!window.mobileInput) window.mobileInput = { left: false, right: false, jump: false, axisX: 0, _jumpJustDown: false };
     bindTouchBtn('btn-jump',  'jump');
+
+    // ── Analogue joystick strip ───────────────────────────────────────────────
+    (function () {
+      const strip = document.getElementById('joystick-strip');
+      const thumb = document.getElementById('joystick-thumb');
+      if (!strip || !thumb) return;
+
+      let trackingId = null; // which touch point we're following
+
+      function _updateThumb(factor) {
+        // factor: -1 (full left) … 0 (center) … +1 (full right)
+        const halfW = strip.clientWidth / 2;
+        const clampedF = Math.max(-1, Math.min(1, factor));
+        // Position thumb: center is 50%, range is ±(50% - thumb_half - padding)
+        const range = halfW - 34; // keep thumb inside strip
+        const px = halfW + clampedF * range;
+        thumb.style.left = px + 'px';
+      }
+
+      function _applyFactor(factor) {
+        if (!window.mobileInput) return;
+        // Store analogue factor; game.js reads it
+        window.mobileInput.axisX = factor;
+        // Also keep binary left/right for backwards compat with keyboard logic
+        window.mobileInput.left  = factor < -0.1;
+        window.mobileInput.right = factor >  0.1;
+      }
+
+      function _getTouchFactor(touch) {
+        const rect = strip.getBoundingClientRect();
+        const relX = touch.clientX - rect.left;
+        // Normalise to -1 … +1 with a small dead-zone in the middle
+        const raw = (relX / rect.width) * 2 - 1; // -1..+1
+        const dead = 0.10;
+        if (Math.abs(raw) < dead) return 0;
+        // Rescale so edges of dead-zone map to 0
+        return raw > 0
+          ? (raw - dead) / (1 - dead)
+          : (raw + dead) / (1 - dead);
+      }
+
+      strip.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        if (trackingId !== null) return; // already tracking
+        const t = e.changedTouches[0];
+        trackingId = t.identifier;
+        strip.classList.add('active');
+        const f = _getTouchFactor(t);
+        _applyFactor(f);
+        _updateThumb(f);
+      }, { passive: false });
+
+      strip.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        for (const t of e.changedTouches) {
+          if (t.identifier === trackingId) {
+            const f = _getTouchFactor(t);
+            _applyFactor(f);
+            _updateThumb(f);
+            break;
+          }
+        }
+      }, { passive: false });
+
+      function _release() {
+        trackingId = null;
+        strip.classList.remove('active');
+        _applyFactor(0);
+        _updateThumb(0);
+      }
+
+      strip.addEventListener('touchend',    (e) => { e.preventDefault(); _release(); }, { passive: false });
+      strip.addEventListener('touchcancel', ()  => { _release(); });
+    })();
+
+
 
     // ── Auto-fullscreen on landscape, exit on portrait ────────────────────────
     function _isLandscape() {
